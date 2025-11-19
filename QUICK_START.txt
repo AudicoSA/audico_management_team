@@ -1,0 +1,63 @@
+===============================================
+AUDICO AI - QUICK START GUIDE
+===============================================
+
+Step 1: Start the Server
+-------------------------
+Windows: Double-click START_SERVER.bat
+OR run: python -m src.main
+
+Step 2: Test Health Check
+--------------------------
+Open in browser: http://localhost:8000/health
+
+Step 3: Send Test Email
+------------------------
+To: support@audicoonline.co.za
+Subject: Where is my order?
+Body: I placed order #12345 last week. Can you check the status?
+
+Step 4: Trigger Processing
+---------------------------
+Wait 60 seconds OR run:
+curl -X POST http://localhost:8000/email/poll
+
+Step 5: Check Results
+----------------------
+1. Gmail Drafts - Should have new draft
+2. Supabase Dashboard:
+   https://supabase.com/dashboard/project/ajdehycoypilsegmxbto
+   - View email_logs table
+   - View agent_logs table
+
+===============================================
+HELPFUL FILES
+===============================================
+
+COMMANDS.md - All terminal commands
+TEST_EMAILS.md - Email templates to test with
+TESTING_CHECKLIST.md - Complete testing guide
+README.md - Full documentation
+
+===============================================
+TROUBLESHOOTING
+===============================================
+
+Problem: Server won't start
+Solution: Check console for errors, verify .env file exists
+
+Problem: No emails processed
+Solution: Check Gmail has unread emails, check console logs
+
+Problem: Gmail OAuth error
+Solution: Re-run fetch_gmail_refresh_token.py in parent directory
+
+===============================================
+SUPPORT
+===============================================
+
+Documentation: See README.md
+Supabase: https://supabase.com/dashboard/project/ajdehycoypilsegmxbto
+Contact: kenny@audico.co.za
+
+===============================================
