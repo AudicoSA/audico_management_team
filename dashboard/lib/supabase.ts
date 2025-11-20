@@ -36,6 +36,10 @@ export type OrderTracker = {
   invoice_no: string | null
   order_paid: boolean | null
   supplier_amount: number | null
+  supplier_invoice_no: string | null
+  supplier_quote_no: string | null
+  supplier_status: string | null
+  supplier_invoice_url: string | null
   shipping: number | null
   profit: number | null
   updates: string | null
