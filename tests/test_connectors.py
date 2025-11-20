@@ -10,9 +10,9 @@ class TestGmailConnector:
         """Test listing unread messages."""
         from src.connectors.gmail import GmailConnector
 
-        with patch('src.connectors.gmail.build') as mock_build:
+        with patch('src.connectors.gmail.GmailConnector._build_service') as mock_build_service:
             mock_service = Mock()
-            mock_build.return_value = mock_service
+            mock_build_service.return_value = mock_service
 
             # Mock Gmail API response
             mock_service.users().messages().list().execute.return_value = {
@@ -22,8 +22,12 @@ class TestGmailConnector:
                 ]
             }
 
-            connector = GmailConnector()
-            messages = connector.list_unread_messages(max_results=10)
+            # Mock config to avoid file access
+            with patch('src.connectors.gmail.get_config') as mock_config:
+                mock_config.return_value.gmail_client_secret_file.exists.return_value = True
+                
+                connector = GmailConnector()
+                messages = connector.list_unread_messages(max_results=10)
 
             assert len(messages) == 2
             assert "msg1" in messages
@@ -33,21 +37,25 @@ class TestGmailConnector:
         """Test creating email draft."""
         from src.connectors.gmail import GmailConnector
 
-        with patch('src.connectors.gmail.build') as mock_build:
+        with patch('src.connectors.gmail.GmailConnector._build_service') as mock_build_service:
             mock_service = Mock()
-            mock_build.return_value = mock_service
+            mock_build_service.return_value = mock_service
 
             mock_service.users().drafts().create().execute.return_value = {
                 "id": "draft_123"
             }
 
-            connector = GmailConnector()
-            draft_id = connector.create_draft(
-                to="customer@example.com",
-                subject="Re: Order inquiry",
-                body="Thank you for your inquiry.",
-                thread_id="thread_123"
-            )
+            # Mock config to avoid file access
+            with patch('src.connectors.gmail.get_config') as mock_config:
+                mock_config.return_value.gmail_client_secret_file.exists.return_value = True
+                
+                connector = GmailConnector()
+                draft_id = connector.create_draft(
+                    to_email="customer@example.com",
+                    subject="Re: Order inquiry",
+                    body="Thank you for your inquiry.",
+                    thread_id="thread_123"
+                )
 
             assert draft_id == "draft_123"
 
@@ -110,24 +118,21 @@ class TestLLMClient:
         """Test email classification."""
         from src.models.llm_client import classify_email
 
-        with patch('src.models.llm_client.get_openai_client') as mock_client_getter:
-            mock_client = Mock()
-            mock_client_getter.return_value = mock_client
-
-            # Mock OpenAI response
-            mock_response = Mock()
-            mock_response.choices = [Mock()]
-            mock_response.choices[0].message.content = '''
+        # Patch LLMClient.generate instead of get_openai_client
+        with patch('src.models.llm_client.LLMClient.generate') as mock_generate:
+            mock_generate.return_value = '''
             {
                 "category": "ORDER_STATUS_QUERY",
                 "confidence": 0.95,
                 "reasoning": "Customer is asking about order status"
             }
             '''
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+            # No need to mock OpenAI client internals anymore
+            # mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
             result = await classify_email(
-                body="Where is my order?",
+                email_body="Where is my order?",
                 subject="Order inquiry"
             )
 
@@ -139,18 +144,15 @@ class TestLLMClient:
         """Test drafting email response."""
         from src.models.llm_client import draft_email_response
 
-        with patch('src.models.llm_client.get_openai_client') as mock_client_getter:
-            mock_client = Mock()
-            mock_client_getter.return_value = mock_client
+        # Patch LLMClient.generate instead of get_openai_client
+        with patch('src.models.llm_client.LLMClient.generate') as mock_generate:
+            mock_generate.return_value = "Thank you for your inquiry. We are checking on your order."
 
-            # Mock OpenAI response
-            mock_response = Mock()
-            mock_response.choices = [Mock()]
-            mock_response.choices[0].message.content = "Thank you for your inquiry. We are checking on your order."
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+            # No need to mock OpenAI client internals anymore
+            # mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
             result = await draft_email_response(
-                body="Where is my order #12345?",
+                email_body="Where is my order #12345?",
                 subject="Order inquiry",
                 category="ORDER_STATUS_QUERY",
                 context={}

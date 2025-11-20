@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.agents.email_agent import get_email_agent
+from src.agents.orders_agent import get_orders_agent
 from src.utils.config import get_config
 from src.utils.logging import get_logger, setup_logging
 
@@ -153,6 +154,24 @@ async def send_email(email_id: str):
         return result
     except Exception as e:
         logger.error("email_send_failed", email_id=email_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/shipments/create")
+async def create_shipment(payload: Dict[str, Any]):
+    """Create a shipment for an order."""
+    try:
+        agent = get_orders_agent()
+        # Ensure action is set
+        payload["action"] = "create_shipment"
+        result = await agent.run(payload)
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("error"))
+            
+        return result
+    except Exception as e:
+        logger.error("create_shipment_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

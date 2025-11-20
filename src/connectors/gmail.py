@@ -1,5 +1,6 @@
 """Gmail connector using OAuth2 for email operations."""
 import base64
+import io
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
@@ -175,6 +176,85 @@ class GmailConnector:
         except HttpError as e:
             logger.error("get_message_failed", message_id=message_id, error=str(e))
             raise
+
+    def get_attachments(self, message_id: str) -> List[Dict[str, Any]]:
+        """Download and extract text from PDF attachments.
+        
+        Args:
+            message_id: Gmail message ID
+            
+        Returns:
+            List of attachment dictionaries with 'filename' and 'text' keys
+        """
+        attachments = []
+        
+        try:
+            message = (
+                self.service.users()
+                .messages()
+                .get(userId="me", id=message_id, format="full")
+                .execute()
+            )
+            
+            payload = message.get("payload", {})
+            parts = payload.get("parts", [])
+            
+            for part in parts:
+                if part.get("filename") and part.get("body", {}).get("attachmentId"):
+                    filename = part["filename"]
+                    attachment_id = part["body"]["attachmentId"]
+                    
+                    # Download attachment
+                    attachment = (
+                        self.service.users()
+                        .messages()
+                        .attachments()
+                        .get(userId="me", messageId=message_id, id=attachment_id)
+                        .execute()
+                    )
+                    
+                    data = base64.urlsafe_b64decode(attachment["data"])
+                    
+                    # Extract text from PDF
+                    if filename.lower().endswith(".pdf"):
+                        text = self._extract_pdf_text(data)
+                        if text:
+                            attachments.append({
+                                "filename": filename,
+                                "text": text,
+                                "data": data
+                            })
+                            logger.info("pdf_attachment_extracted", filename=filename, text_length=len(text))
+            
+            return attachments
+        except Exception as e:
+            logger.error("get_attachments_failed", message_id=message_id, error=str(e))
+            return []
+    
+    @staticmethod
+    def _extract_pdf_text(pdf_data: bytes) -> str:
+        """Extract text from PDF bytes using PyPDF2.
+        
+        Args:
+            pdf_data: PDF file as bytes
+            
+        Returns:
+            Extracted text or empty string if extraction fails
+        """
+        try:
+            from PyPDF2 import PdfReader
+            
+            pdf_file = io.BytesIO(pdf_data)
+            reader = PdfReader(pdf_file)
+            
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            
+            return text
+        except Exception as e:
+            logger.error("pdf_extraction_failed", error=str(e))
+            return ""
 
     def create_draft(
         self,

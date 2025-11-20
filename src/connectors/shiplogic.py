@@ -57,47 +57,110 @@ class ShiplogicConnector:
             logger.error("track_shipment_error", order_number=order_number, error=str(e))
             return None
 
+    async def get_rates(
+        self,
+        collection_address: Dict[str, Any],
+        delivery_address: Dict[str, Any],
+        parcels: list[Dict[str, Any]],
+    ) -> list[Dict[str, Any]]:
+        """Get shipping rates for a shipment.
+        
+        Args:
+            collection_address: Collection address details
+            delivery_address: Delivery address details
+            parcels: List of parcel details
+            
+        Returns:
+            List of available rates/services
+        """
+        try:
+            url = f"{self.base_url}/rates"
+            payload = {
+                "collection_address": collection_address,
+                "delivery_address": delivery_address,
+                "parcels": parcels,
+            }
+            
+            response = await self.session.post(url, json=payload)
+            response.raise_for_status()
+            
+            data = response.json()
+            return data.get("rates", [])
+            
+        except Exception as e:
+            logger.error("get_rates_failed", error=str(e))
+            return []
+
     async def create_shipment(
         self,
         order_id: str,
-        customer_name: str,
-        address: Dict[str, str],
-        parcel_details: Dict[str, Any],
-        service_level: Optional[str] = None,
+        collection_address: Dict[str, Any],
+        delivery_address: Dict[str, Any],
+        parcels: list[Dict[str, Any]],
+        service_level_code: str = "ECO", # Default to Economy
+        special_instructions: str = "",
+        dry_run: bool = True,
     ) -> Optional[Dict[str, Any]]:
-        """Create a shipment (stub - full implementation in Stage 2).
-
+        """Create a shipment.
+        
         Args:
-            order_id: OpenCart order ID
-            customer_name: Customer name
-            address: Delivery address dict with street, city, postal_code, country
-            parcel_details: Parcel details (weight, dimensions, value)
-            service_level: Service level (default from config)
-
+            order_id: Internal order ID (used as reference)
+            collection_address: Collection address details
+            delivery_address: Delivery address details
+            parcels: List of parcel details
+            service_level_code: Service level code (e.g. 'ECO', 'ONX')
+            special_instructions: Special instructions for courier
+            dry_run: If True, returns mock data without calling API
+            
         Returns:
             Shipment creation response with tracking details
         """
-        logger.warning(
-            "create_shipment_stub_called",
-            order_id=order_id,
-            note="Stage 1 stub - returning mock data",
-        )
+        if dry_run:
+            logger.info(
+                "create_shipment_dry_run",
+                order_id=order_id,
+                note="Dry run enabled - returning mock data",
+            )
+            return {
+                "shipment_id": f"DRY-RUN-{order_id}",
+                "tracking_number": f"TRK{order_id}",
+                "tracking_url": f"https://track.shiplogic.com/DRY-RUN-{order_id}",
+                "courier": "Dry Run Courier",
+                "service_level": service_level_code,
+                "estimated_delivery": "3-5 business days",
+                "cost": 150.00,
+                "status": "pending",
+            }
 
-        # Stage 1: Return mock response
-        # Stage 2: Implement actual Shiplogic API call
-        mock_response = {
-            "shipment_id": f"MOCK-{order_id}",
-            "tracking_number": f"TRK{order_id}",
-            "tracking_url": f"https://track.shiplogic.com/MOCK-{order_id}",
-            "courier": "Mock Courier",
-            "service_level": service_level or "Express",
-            "estimated_delivery": "3-5 business days",
-            "cost": 0.00,
-            "status": "pending",
-        }
+        try:
+            url = f"{self.base_url}/shipments"
+            payload = {
+                "collection_address": collection_address,
+                "delivery_address": delivery_address,
+                "parcels": parcels,
+                "service_level_code": service_level_code,
+                "references": [order_id],
+                "special_instructions": special_instructions,
+            }
 
-        logger.info("shipment_created_mock", order_id=order_id, shipment_id=mock_response["shipment_id"])
-        return mock_response
+            response = await self.session.post(url, json=payload)
+            response.raise_for_status()
+            
+            data = response.json()
+            logger.info("shipment_created", order_id=order_id, shipment_id=data.get("id"))
+            return {
+                "shipment_id": data.get("id"),
+                "tracking_number": data.get("tracking_reference"),
+                "tracking_url": data.get("tracking_url"),
+                "courier": data.get("courier", {}).get("name"),
+                "service_level": data.get("service_level", {}).get("name"),
+                "cost": data.get("cost", 0.0),
+                "status": data.get("status", {}).get("name", "pending").lower(),
+            }
+
+        except Exception as e:
+            logger.error("create_shipment_failed", order_id=order_id, error=str(e))
+            return None
 
     async def close(self) -> None:
         """Close HTTP session."""

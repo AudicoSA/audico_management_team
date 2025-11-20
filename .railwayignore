@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+client_secret_*.json
+test_output.txt
+.git/
+.github/
+dashboard/node_modules/
+dashboard/.next/

@@ -8,18 +8,34 @@ from src.connectors.supabase import SupabaseConnector
 @pytest.fixture
 def sample_email():
     """Sample parsed email for testing."""
-    return ParsedEmail(
-        message_id="test_message_123",
-        thread_id="test_thread_123",
-        from_email="customer@example.com",
-        to_email="support@audicoonline.co.za",
-        subject="Where is my order #12345?",
-        body="Hi, I ordered a product last week (order #12345) and haven't received any updates. Can you help?",
-        date="2024-01-15T10:30:00Z",
-        has_attachments=False,
-        attachment_count=0,
-        labels=["INBOX", "UNREAD"],
-    )
+    import base64
+    body_text = "Hi, I ordered a product last week (order #12345) and haven't received any updates. Can you help?"
+    b64_body = base64.urlsafe_b64encode(body_text.encode("utf-8")).decode("utf-8")
+
+    return ParsedEmail({
+        "id": "test_message_123",
+        "threadId": "test_thread_123",
+        "labelIds": ["INBOX", "UNREAD"],
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "customer@example.com"},
+                {"name": "To", "value": "support@audicoonline.co.za"},
+                {"name": "Subject", "value": "Where is my order #12345?"},
+                {"name": "Date", "value": "2024-01-15T10:30:00Z"},
+            ],
+            "body": {
+                "data": b64_body
+            },
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": {
+                        "data": b64_body
+                    }
+                }
+            ]
+        }
+    })
 
 
 @pytest.fixture

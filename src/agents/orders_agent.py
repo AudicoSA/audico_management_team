@@ -1,7 +1,10 @@
 from typing import Dict, Any, List, Optional
-import logging
+from src.connectors.shiplogic import get_shiplogic_connector
+from src.connectors.opencart import get_opencart_connector
+from src.connectors.supabase import get_supabase_connector
+from src.utils.logging import AgentLogger
 
-logger = logging.getLogger(__name__)
+logger = AgentLogger("OrdersLogisticsAgent")
 
 class OrdersLogisticsAgent:
     """
@@ -11,11 +14,12 @@ class OrdersLogisticsAgent:
 
     def __init__(self):
         self.name = "OrdersLogisticsAgent"
-        # Initialize tools/connectors here
-        # self.shiplogic = ShiplogicConnector()
-        # self.opencart = OpenCartConnector()
+        self.shiplogic = get_shiplogic_connector()
+        self.opencart = get_opencart_connector()
+        self.supabase = get_supabase_connector()
+        logger.info("orders_agent_initialized")
 
-    async def run(self, input_data: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, input_data: Dict[str, Any], state: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Main entry point for the agent.
         
@@ -26,7 +30,7 @@ class OrdersLogisticsAgent:
         Returns:
             Updated state or result.
         """
-        logger.info(f"[{self.name}] Processing input: {input_data}")
+        logger.info("processing_input", input_data=input_data)
         
         action = input_data.get("action")
         
@@ -34,32 +38,136 @@ class OrdersLogisticsAgent:
             return await self._create_shipment(input_data)
         elif action == "track_shipment":
             return await self._track_shipment(input_data)
-        elif action == "process_supplier_order":
-            return await self._process_supplier_order(input_data)
+        elif action == "get_rates":
+            return await self._get_rates(input_data)
         else:
-            return {"error": f"Unknown action: {action}"}
+            return {"status": "error", "error": f"Unknown action: {action}"}
 
     async def _create_shipment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Create a shipment via Shiplogic.
         """
-        logger.info(f"[{self.name}] Creating shipment for order {data.get('order_id')}")
-        # TODO: Implement Shiplogic integration
-        return {"status": "mock_shipment_created", "tracking_number": "MOCK12345"}
+        order_id = data.get("order_id")
+        dry_run = data.get("dry_run", True)
+        
+        if not order_id:
+            return {"status": "error", "error": "Missing order_id"}
+
+        logger.info("creating_shipment", order_id=order_id, dry_run=dry_run)
+
+        try:
+            # 1. Fetch order details from OpenCart
+            order = await self.opencart.get_order(order_id)
+            if not order:
+                return {"status": "error", "error": f"Order {order_id} not found in OpenCart"}
+
+            # 2. Prepare addresses
+            # Map OpenCart address to Shiplogic format
+            # Note: This is a simplified mapping. Real implementation might need more robust parsing.
+            shipping_address = order.get("shipping_address", {})
+            delivery_address = {
+                "company": order.get("company") or "",
+                "street_address": f"{shipping_address.get('address_1', '')} {shipping_address.get('address_2', '')}".strip(),
+                "local_area": shipping_address.get("city", ""),
+                "city": shipping_address.get("city", ""),
+                "code": shipping_address.get("postcode", ""),
+                "zone": shipping_address.get("zone", ""),
+                "country_code": "ZA", # Assuming South Africa for now
+            }
+            
+            # Collection address (Audico HQ - hardcoded for now or fetch from config)
+            collection_address = {
+                "company": "Audico Online",
+                "street_address": "123 Example Street", # TODO: Get from config
+                "local_area": "Sandton",
+                "city": "Johannesburg",
+                "code": "2000",
+                "country_code": "ZA",
+            }
+
+            # 3. Prepare parcels
+            # Simplified: 1 parcel, 2kg
+            parcels = [{
+                "parcel_description": "Standard Box",
+                "weight": 2.0,
+                "height": 10,
+                "length": 20,
+                "width": 15,
+            }]
+
+            # 4. Create Shipment
+            shipment = await self.shiplogic.create_shipment(
+                order_id=order_id,
+                collection_address=collection_address,
+                delivery_address=delivery_address,
+                parcels=parcels,
+                service_level_code="ECO", # Default
+                dry_run=dry_run
+            )
+
+            if not shipment:
+                return {"status": "error", "error": "Failed to create shipment via Shiplogic"}
+
+            # 5. Update Supabase
+            if not dry_run:
+                # Create shipment record
+                await self.supabase.create_shipment(
+                    order_no=order_id,
+                    shiplogic_shipment_id=shipment.get("shipment_id"),
+                    tracking_url=shipment.get("tracking_url"),
+                    courier=shipment.get("courier"),
+                    shipping_cost=shipment.get("cost"),
+                    status=shipment.get("status"),
+                    payload=shipment
+                )
+                
+                # Update tracker
+                await self.supabase.upsert_order_tracker(
+                    order_no=order_id,
+                    shipping=shipment.get("cost"),
+                    updates=f"Shipment created: {shipment.get('tracking_number')}"
+                )
+
+            return {
+                "status": "success",
+                "shipment": shipment
+            }
+
+        except Exception as e:
+            logger.error("create_shipment_failed", order_id=order_id, error=str(e))
+            return {"status": "error", "error": str(e)}
 
     async def _track_shipment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Track a shipment.
         """
-        tracking_id = data.get("tracking_id")
-        logger.info(f"[{self.name}] Tracking shipment {tracking_id}")
-        # TODO: Implement tracking logic
-        return {"status": "in_transit", "location": "Johannesburg"}
+        order_id = data.get("order_id")
+        if not order_id:
+            return {"status": "error", "error": "Missing order_id"}
+            
+        result = await self.shiplogic.track_shipment(order_id)
+        if result:
+            return {"status": "success", "tracking": result}
+        return {"status": "error", "error": "Tracking info not found"}
 
-    async def _process_supplier_order(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Handle supplier ordering logic.
-        """
-        logger.info(f"[{self.name}] Processing supplier order")
-        # TODO: Implement supplier ordering logic
-        return {"status": "supplier_order_placed"}
+    async def _get_rates(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Get shipping rates."""
+        # TODO: Implement full rate fetching logic
+        # For now, return mock rates
+        return {
+            "status": "success",
+            "rates": [
+                {"service": "Economy", "cost": 100.00},
+                {"service": "Express", "cost": 150.00}
+            ]
+        }
+
+# Global instance
+_orders_agent: Optional[OrdersLogisticsAgent] = None
+
+def get_orders_agent() -> OrdersLogisticsAgent:
+    """Get or create global OrdersLogisticsAgent instance."""
+    global _orders_agent
+    if _orders_agent is None:
+        _orders_agent = OrdersLogisticsAgent()
+    return _orders_agent

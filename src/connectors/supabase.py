@@ -171,11 +171,20 @@ class SupabaseConnector:
         owner_accounts: Optional[bool] = None,
         flag_done: Optional[bool] = None,
         flag_urgent: Optional[bool] = None,
+
+        supplier_invoice_no: Optional[str] = None,
+        supplier_quote_no: Optional[str] = None,
+        supplier_status: Optional[str] = None,
         source: str = "agent",
         last_modified_by: str = "system",
+        supplier_invoice_url: Optional[str] = None,
     ) -> None:
         """Insert or update order tracker record."""
         try:
+            # 1. Fetch existing record to get current values for profit calculation
+            existing = await self.get_order_tracker(order_no)
+            current_data = existing if existing else {}
+
             record = {"order_no": order_no, "source": source, "last_modified_by": last_modified_by}
 
             # Add non-None fields
@@ -195,10 +204,48 @@ class SupabaseConnector:
                 record["supplier_amount"] = supplier_amount
             if shipping is not None:
                 record["shipping"] = shipping
-            if profit is not None:
-                record["profit"] = profit
+            if supplier_invoice_no is not None:
+                record["supplier_invoice_no"] = supplier_invoice_no
+            if supplier_quote_no is not None:
+                record["supplier_quote_no"] = supplier_quote_no
+            if supplier_status is not None:
+                record["supplier_status"] = supplier_status
+            if flag_done is not None:
+                record["flag_done"] = flag_done
+            if flag_urgent is not None:
+                record["flag_urgent"] = flag_urgent
+            if supplier_invoice_url is not None:
+                record["supplier_invoice_url"] = supplier_invoice_url
+
+            # 3. Calculate Profit
+            # Profit = Cost (Revenue) - Supplier Amount - Shipping
+            # Use new value if provided, else existing value, else 0
+            
+            # Note: 'cost' in DB is actually Revenue/Order Total
+            rev_val = cost if cost is not None else current_data.get("cost", 0)
+            sup_val = supplier_amount if supplier_amount is not None else current_data.get("supplier_amount", 0)
+            ship_val = shipping if shipping is not None else current_data.get("shipping", 0)
+            
+            # Ensure we handle None values from DB
+            rev_val = float(rev_val) if rev_val else 0.0
+            sup_val = float(sup_val) if sup_val else 0.0
+            ship_val = float(ship_val) if ship_val else 0.0
+            
+            # Only calculate profit if we have at least Revenue
+            if rev_val > 0:
+                record["profit"] = rev_val - sup_val - ship_val
+
             if updates is not None:
-                record["updates"] = updates
+                # Append updates if existing
+                existing_updates = current_data.get("updates", "")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                new_update = f"[{timestamp}] {updates}"
+                if existing_updates:
+                    record["updates"] = f"{new_update}\n{existing_updates}"
+                else:
+                    record["updates"] = new_update
+
+            # Owner flags
             if owner_wade is not None:
                 record["owner_wade"] = owner_wade
             if owner_lucky is not None:
@@ -207,10 +254,6 @@ class SupabaseConnector:
                 record["owner_kenny"] = owner_kenny
             if owner_accounts is not None:
                 record["owner_accounts"] = owner_accounts
-            if flag_done is not None:
-                record["flag_done"] = flag_done
-            if flag_urgent is not None:
-                record["flag_urgent"] = flag_urgent
 
             self.client.table("orders_tracker").upsert(record).execute()
             logger.info("order_tracker_upserted", order_no=order_no, source=source)
@@ -218,6 +261,35 @@ class SupabaseConnector:
         except Exception as e:
             logger.error("order_tracker_upsert_failed", order_no=order_no, error=str(e))
             raise
+
+    async def upload_file(self, bucket: str, path: str, data: bytes, content_type: str = "application/pdf") -> Optional[str]:
+        """Upload file to Supabase Storage and return public URL.
+        
+        Args:
+            bucket: Storage bucket name
+            path: File path within bucket
+            data: File content as bytes
+            content_type: MIME type
+            
+        Returns:
+            Public URL of the uploaded file or None if failed
+        """
+        try:
+            # Upload file
+            self.client.storage.from_(bucket).upload(
+                path=path,
+                file=data,
+                file_options={"content-type": content_type, "upsert": "true"}
+            )
+            
+            # Get public URL
+            public_url = self.client.storage.from_(bucket).get_public_url(path)
+            logger.info("file_uploaded", bucket=bucket, path=path, url=public_url)
+            return public_url
+            
+        except Exception as e:
+            logger.error("file_upload_failed", bucket=bucket, path=path, error=str(e))
+            return None
 
     async def get_order_tracker(self, order_no: str) -> Optional[Dict[str, Any]]:
         """Retrieve order tracker record by order number."""

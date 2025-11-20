@@ -54,6 +54,17 @@ class EmailManagementAgent:
                 subject=email.subject,
             )
 
+            # 2b. Get PDF attachments and append text to body
+            attachments = []
+            if email.has_attachments:
+                attachments = self.gmail.get_attachments(message_id)
+                if attachments:
+                    logger.info("attachments_found", count=len(attachments))
+                    # Append PDF text to email body for processing
+                    for att in attachments:
+                        email.body += f"\n\n--- ATTACHMENT: {att['filename']} ---\n{att['text']}\n"
+                    logger.info("pdf_text_appended_to_body", total_body_length=len(email.body))
+
             # 3. Classify email
             classification = await classify_email(email.body, email.subject)
             category = classification["category"]
@@ -118,6 +129,58 @@ class EmailManagementAgent:
                     has_attachments=email.has_attachments,
                     attachment_count=email.attachment_count
                 )
+
+                # Handle Supplier Invoices/Quotes specifically
+                if category in ["SUPPLIER_INVOICE", "SUPPLIER_QUOTE", "SUPPLIER_COMMUNICATION"]:
+                    invoice_details = self._extract_invoice_details(email.subject, email.body)
+                    
+                    # Upload PDF if present
+                    invoice_url = None
+                    if attachments:
+                        for att in attachments:
+                            if att["filename"].lower().endswith(".pdf") and "data" in att:
+                                try:
+                                    import datetime
+                                    now = datetime.datetime.now()
+                                    path_prefix = f"{now.year}/{now.month}"
+                                    safe_filename = att["filename"].replace(" ", "_")
+                                    
+                                    # Use order number in path if available, else message_id
+                                    if order_numbers:
+                                        file_path = f"invoices/{path_prefix}/{order_numbers[0]}_{safe_filename}"
+                                    else:
+                                        file_path = f"invoices/{path_prefix}/{message_id}_{safe_filename}"
+                                        
+                                    invoice_url = await self.supabase.upload_file(
+                                        bucket="invoices",
+                                        path=file_path,
+                                        data=att["data"]
+                                    )
+                                    if invoice_url:
+                                        logger.info("invoice_uploaded", url=invoice_url)
+                                        break
+                                except Exception as e:
+                                    logger.error("invoice_upload_failed", error=str(e))
+
+                    # If we found an order number, update the tracker
+                    if order_numbers:
+                        order_no = order_numbers[0]  # Assume first order number is the primary one
+                        
+                        # Determine status based on category
+                        supplier_status = "Invoiced" if category == "SUPPLIER_INVOICE" else "Quoted"
+                        
+                        await self.supabase.upsert_order_tracker(
+                            order_no=order_no,
+                            supplier=invoice_details.get("supplier_name") or email.from_email,
+                            supplier_invoice_no=invoice_details.get("invoice_no"),
+                            supplier_quote_no=invoice_details.get("quote_no"),
+                            supplier_amount=invoice_details.get("amount"),
+                            supplier_status=supplier_status,
+                            source="agent",
+                            updates=f"Received {category} from {email.from_email}",
+                            supplier_invoice_url=invoice_url
+                        )
+                        logger.info("supplier_info_updated", order_no=order_no, details=invoice_details)
 
                 # Update email log - use CLASSIFIED status for supplier emails to track them
                 # Future agents can query by category to find emails needing processing
@@ -237,6 +300,41 @@ class EmailManagementAgent:
 
         # Return unique order numbers
         return list(set(order_numbers))
+
+    def _extract_invoice_details(self, subject: str, body: str) -> Dict[str, Any]:
+        """Extract invoice/quote details from email text.
+        
+        Returns:
+            Dict with keys: invoice_no, quote_no, amount, supplier_name
+        """
+        details = {}
+        combined_text = f"{subject} {body}"
+        
+        # Invoice Number
+        inv_match = re.search(r"(?:Invoice|Inv)[:\s#]*([A-Z0-9-]{3,15})", combined_text, re.IGNORECASE)
+        if inv_match:
+            details["invoice_no"] = inv_match.group(1)
+            
+        # Quote Number
+        quote_match = re.search(r"(?:Quote|Qt)[:\s#]*([A-Z0-9-]{3,15})", combined_text, re.IGNORECASE)
+        if quote_match:
+            details["quote_no"] = quote_match.group(1)
+            
+        # Amount (look for R xxx.xx or similar)
+        amount_match = re.search(r"R\s*([\d,]+\.\d{2})", combined_text)
+        if amount_match:
+            try:
+                amount_str = amount_match.group(1).replace(",", "")
+                details["amount"] = float(amount_str)
+            except ValueError:
+                pass
+                
+        # Supplier Name (simple heuristic for now - can be improved with LLM)
+        # For now, we rely on the sender name or specific patterns
+        if "Data Video" in combined_text or "Datavideo" in combined_text:
+            details["supplier_name"] = "Data Video Communications (Pty) Ltd"
+            
+        return details
 
     async def _gather_context(
         self, category: str, email: ParsedEmail, order_numbers: list[str]

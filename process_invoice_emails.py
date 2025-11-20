@@ -90,6 +90,69 @@ def extract_email_body(payload: Dict) -> str:
     return ""
 
 
+def extract_pdf_text(attachment_data: bytes) -> str:
+    """Extract text from PDF attachment using PyPDF2."""
+    try:
+        import io
+        from PyPDF2 import PdfReader
+        
+        pdf_file = io.BytesIO(attachment_data)
+        reader = PdfReader(pdf_file)
+        
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        
+        return text
+    except Exception as e:
+        logger.error("pdf_extraction_failed", error=str(e))
+        return ""
+
+
+def get_attachments(service, msg_id: str) -> list[Dict[str, Any]]:
+    """Download and extract text from email attachments."""
+    attachments = []
+    
+    try:
+        message = service.users().messages().get(
+            userId="me",
+            id=msg_id,
+            format="full"
+        ).execute()
+        
+        payload = message.get("payload", {})
+        parts = payload.get("parts", [])
+        
+        for part in parts:
+            if part.get("filename") and part.get("body", {}).get("attachmentId"):
+                filename = part["filename"]
+                attachment_id = part["body"]["attachmentId"]
+                
+                # Download attachment
+                attachment = service.users().messages().attachments().get(
+                    userId="me",
+                    messageId=msg_id,
+                    id=attachment_id
+                ).execute()
+                
+                data = base64.urlsafe_b64decode(attachment["data"])
+                
+                # Extract text from PDF
+                if filename.lower().endswith(".pdf"):
+                    text = extract_pdf_text(data)
+                    if text:
+                        attachments.append({
+                            "filename": filename,
+                            "text": text
+                        })
+                        logger.info("pdf_attachment_processed", filename=filename, text_length=len(text))
+        
+        return attachments
+    except Exception as e:
+        logger.error("attachment_download_failed", error=str(e))
+        return []
+
+
 def extract_header(headers, name: str) -> Optional[str]:
     """Extract header value by name."""
     for header in headers:
@@ -302,6 +365,13 @@ async def process_emails(max_emails: int = 20, query: str = "is:unread"):
             from_email = extract_header(headers, "From") or ""
             subject = extract_header(headers, "Subject") or "(No Subject)"
             body = extract_email_body(payload)
+            
+            # Get attachments and append their text to body
+            attachments = get_attachments(service, msg_id)
+            if attachments:
+                body += "\n\n--- ATTACHMENT CONTENT ---\n"
+                for att in attachments:
+                    body += f"\n[{att['filename']}]\n{att['text']}\n"
 
             print(f"{'='*80}")
             print(f"Email: {subject[:60]}")
