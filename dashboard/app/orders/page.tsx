@@ -196,8 +196,8 @@ export default function OrdersPage() {
           <button
             onClick={() => setShowCompleted(!showCompleted)}
             className={`px-4 py-2 rounded text-sm ${showCompleted
-                ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                : 'bg-gray-600 text-white hover:bg-gray-700'
+              ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              : 'bg-gray-600 text-white hover:bg-gray-700'
               }`}
           >
             {showCompleted ? 'Hide Completed' : 'Show Completed'}
@@ -285,7 +285,7 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-3 py-1 text-center border-r border-gray-200">
                         <div
-                          onClick={() => toggleOwner(order.order_no, 'order_paid', order.order_paid)}
+                          onClick={() => toggleOwner(order.order_no, 'order_paid', order.order_paid ?? false)}
                           className={`cursor-pointer hover:opacity-75 transition-opacity ${order.order_paid ? 'text-green-600' : 'text-gray-300'
                             }`}
                         >
@@ -296,7 +296,7 @@ export default function OrdersPage() {
                         <EditableCell order={order} field="shipping" value={order.shipping ? `R${order.shipping.toFixed(2)}` : null} type="number" />
                       </td>
                       <td className={`px-3 py-1 text-right font-semibold border-r border-gray-200 ${order.profit && order.profit > 0 ? 'text-green-600' :
-                          order.profit && order.profit < 0 ? 'text-red-600' : 'text-gray-500'
+                        order.profit && order.profit < 0 ? 'text-red-600' : 'text-gray-500'
                         }`}>
                         {order.profit ? `R${order.profit.toFixed(2)}` : '-'}
                       </td>
