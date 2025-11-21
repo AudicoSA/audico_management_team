@@ -176,7 +176,7 @@ class LLMClient:
 
 
 # Convenience functions for common tasks
-async def classify_email(email_body: str, subject: str) -> Dict[str, Any]:
+async def classify_email(email_body: str, subject: str, attachments: List[str] = []) -> Dict[str, Any]:
     """Classify email into category with confidence score.
 
     Returns:
@@ -210,11 +210,14 @@ CUSTOMER EMAILS (respond to these):
 INTERNAL/BUSINESS EMAILS (do NOT draft responses):
 - INTERNAL_STAFF: Emails between Audico staff (lucky@audico.co.za, kenny@audico.co.za, wade@audico.co.za, etc.)
 - SUPPLIER_COMMUNICATION: Emails from any of the suppliers listed above, OR emails discussing orders with distributors
-- SUPPLIER_INVOICE: Invoice or order confirmation from supplier
+- SUPPLIER_INVOICE: Invoice, order confirmation, or delivery note from supplier (usually has PDF attachment)
 - SUPPLIER_PRICELIST: Pricelist, specials, or catalog from supplier
 - NEW_ORDER_NOTIFICATION: Notification from OpenCart about a new order
 
-IMPORTANT: If the email is from or mentions any supplier in the list above, classify as SUPPLIER_COMMUNICATION
+IMPORTANT RULES:
+1. If the email is from a known supplier AND has an attachment like 'Invoice.pdf', 'Order.pdf', 'Quote.pdf', classify as SUPPLIER_INVOICE.
+2. If the email is from a known supplier but just general discussion, classify as SUPPLIER_COMMUNICATION.
+3. If the email mentions "Order #..." in the subject but is from a supplier/distributor, it is likely a SUPPLIER_INVOICE or SUPPLIER_COMMUNICATION, NOT a customer query.
 
 OTHER:
 - SPAM: Obvious spam or marketing emails
@@ -224,6 +227,8 @@ Return JSON with: category, confidence (0.0-1.0), reasoning (1 sentence).
 """
 
     user_prompt = f"""Subject: {subject}
+
+Attachments: {', '.join(attachments) if attachments else 'None'}
 
 Body:
 {email_body[:1000]}  # Limit to first 1000 chars for classification

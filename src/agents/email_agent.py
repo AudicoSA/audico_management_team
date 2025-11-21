@@ -66,7 +66,8 @@ class EmailManagementAgent:
                     logger.info("pdf_text_appended_to_body", total_body_length=len(email.body))
 
             # 3. Classify email
-            classification = await classify_email(email.body, email.subject)
+            attachment_filenames = [att['filename'] for att in attachments]
+            classification = await classify_email(email.body, email.subject, attachment_filenames)
             category = classification["category"]
             confidence = classification["confidence"]
 
@@ -90,15 +91,28 @@ class EmailManagementAgent:
                 category = "GENERAL_OTHER"
 
             # 4. Create email log
+            # Map internal categories to DB allowed values
+            valid_db_categories = {
+                'NEW_ORDER_NOTIFICATION', 'ORDER_STATUS_QUERY', 'PRODUCT_QUESTION',
+                'QUOTE_REQUEST', 'INVOICE_REQUEST', 'SUPPLIER_INVOICE',
+                'SUPPLIER_PRICELIST', 'COMPLAINT', 'GENERAL_OTHER', 'SPAM'
+            }
+            
+            db_category = category
+            if category not in valid_db_categories:
+                logger.warning("invalid_db_category_mapped", original=category, mapped="GENERAL_OTHER")
+                db_category = "GENERAL_OTHER"
+                
             await self.supabase.create_email_log(
                 gmail_message_id=message_id,
                 gmail_thread_id=email.thread_id,
                 from_email=email.from_email,
                 to_email=email.to_email,
                 subject=email.subject,
-                category=category,
+                category=db_category,
                 classification_confidence=confidence,
                 payload={
+                    "original_category": category, # Store original category in payload
                     "has_attachments": email.has_attachments,
                     "attachment_count": email.attachment_count,
                     "classification_reasoning": classification.get("reasoning", ""),
@@ -132,7 +146,7 @@ class EmailManagementAgent:
 
                 # Handle Supplier Invoices/Quotes specifically
                 if category in ["SUPPLIER_INVOICE", "SUPPLIER_QUOTE", "SUPPLIER_COMMUNICATION"]:
-                    invoice_details = self._extract_invoice_details(email.subject, email.body)
+                    invoice_details = await self._extract_invoice_details(email.subject, email.body)
                     
                     # Upload PDF if present
                     invoice_url = None
@@ -301,40 +315,72 @@ class EmailManagementAgent:
         # Return unique order numbers
         return list(set(order_numbers))
 
-    def _extract_invoice_details(self, subject: str, body: str) -> Dict[str, Any]:
-        """Extract invoice/quote details from email text.
+    async def _extract_invoice_details(self, subject: str, body: str) -> Dict[str, Any]:
+        """Extract invoice/quote details from email text using LLM.
         
         Returns:
             Dict with keys: invoice_no, quote_no, amount, supplier_name
         """
-        details = {}
-        combined_text = f"{subject} {body}"
+        from src.models.llm_client import LLMClient
         
-        # Invoice Number
-        inv_match = re.search(r"(?:Invoice|Inv)[:\s#]*([A-Z0-9-]{3,15})", combined_text, re.IGNORECASE)
-        if inv_match:
-            details["invoice_no"] = inv_match.group(1)
+        client = LLMClient(model_name=self.config.classification_model, temperature=0.1)
+        
+        system_prompt = """You are a data extraction assistant for an accounting system.
+        
+EXTRACT these fields from the email/invoice text:
+- invoice_no: The invoice number (or Order Number if it's a supplier confirmation).
+- quote_no: The quote number (if applicable).
+- amount: The TOTAL AMOUNT INCLUDING VAT/TAX. 
+  - Look for "Total Incl", "Total Due", "Grand Total".
+  - IGNORE "Tax", "VAT", or "Subtotal" amounts unless they are the same as the total.
+  - If text is messy (e.g. "Total R 1 942.351 Item"), extract the monetary value (1942.35).
+  - The amount is usually the largest value in the summary section.
+- supplier_name: The name of the supplier sending the invoice.
+
+Return JSON only:
+{
+    "invoice_no": "string or null",
+    "quote_no": "string or null",
+    "amount": number or null,
+    "supplier_name": "string or null"
+}
+"""
+
+        user_prompt = f"""Subject: {subject}
+        
+Body/Content:
+{body[:4000]}  # Limit context window
+
+Extract invoice details."""
+
+        try:
+            response = await client.generate(system_prompt, user_prompt, max_tokens=300)
             
-        # Quote Number
-        quote_match = re.search(r"(?:Quote|Qt)[:\s#]*([A-Z0-9-]{3,15})", combined_text, re.IGNORECASE)
-        if quote_match:
-            details["quote_no"] = quote_match.group(1)
+            import json
+            import re
             
-        # Amount (look for R xxx.xx or similar)
-        amount_match = re.search(r"R\s*([\d,]+\.\d{2})", combined_text)
-        if amount_match:
-            try:
-                amount_str = amount_match.group(1).replace(",", "")
-                details["amount"] = float(amount_str)
-            except ValueError:
-                pass
+            # Parse JSON
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+            else:
+                data = json.loads(response)
                 
-        # Supplier Name (simple heuristic for now - can be improved with LLM)
-        # For now, we rely on the sender name or specific patterns
-        if "Data Video" in combined_text or "Datavideo" in combined_text:
-            details["supplier_name"] = "Data Video Communications (Pty) Ltd"
+            # Clean amount
+            if data.get("amount"):
+                if isinstance(data["amount"], str):
+                    # Remove currency symbols and commas
+                    clean_amt = re.sub(r'[^\d.]', '', data["amount"])
+                    try:
+                        data["amount"] = float(clean_amt)
+                    except:
+                        data["amount"] = None
+                        
+            return data
             
-        return details
+        except Exception as e:
+            logger.error("invoice_extraction_failed", error=str(e))
+            return {}
 
     async def _gather_context(
         self, category: str, email: ParsedEmail, order_numbers: list[str]

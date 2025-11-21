@@ -1,0 +1,12 @@
+
+Order 28766:
+  Supplier: Alefan Marketing Enterprise t/a Planet Electronics
+  Invoice No: 165165
+  Amount: R1942.35
+  Status: Invoiced
+
+Order 28771:
+  Supplier: supplier@test.com
+  Invoice No: for
+  Amount: R500.0
+  Status: Invoiced
