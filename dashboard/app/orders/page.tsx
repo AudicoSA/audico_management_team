@@ -224,7 +224,7 @@ export default function OrdersPage() {
       ) : (
         <div className="bg-white shadow-sm rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-sm text-gray-900">
               <thead className="bg-gray-800 text-white">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium border-r border-gray-700">ORDER NO</th>
