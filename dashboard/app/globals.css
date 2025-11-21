@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 @layer base {
   :root {
@@ -21,10 +19,12 @@
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-gray-200;
   }
+
   body {
-    @apply bg-background text-foreground;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
@@ -33,31 +33,32 @@
   .glass {
     @apply bg-white/5 backdrop-blur-xl border border-white/10;
   }
-  
+
   .glass-hover {
     @apply hover:bg-white/10 transition-all duration-300;
   }
-  
+
   .gradient-primary {
     background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
   }
-  
+
   .gradient-success {
     background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   }
-  
+
   .gradient-danger {
     background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   }
-  
+
   .animate-glow {
     animation: glow 2s ease-in-out infinite alternate;
   }
-  
+
   @keyframes glow {
     from {
       box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
     }
+
     to {
       box-shadow: 0 0 30px rgba(99, 102, 241, 0.6);
     }
