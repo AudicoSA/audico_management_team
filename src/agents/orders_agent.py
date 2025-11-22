@@ -159,23 +159,35 @@ class OrdersLogisticsAgent:
     async def sync_orders(self) -> Dict[str, Any]:
         """
         Sync recent orders from OpenCart to Supabase.
+        Only syncs orders with valid statuses (excludes unconfirmed, cancelled, etc.)
         """
         logger.info("sync_orders_started")
         try:
+            # Valid OpenCart status IDs to sync
+            # 1 = Pending, 2 = Processing, 15 = Processed (Awaiting Shipment)
+            # 18 = Awaiting Payment, 23 = Paid, 29 = Supplier Ordered
+            VALID_STATUSES = [1, 2, 15, 18, 23, 29]
+            
             # 1. Fetch recent orders
-            orders = await self.opencart.get_recent_orders(limit=20)
+            orders = await self.opencart.get_recent_orders(limit=50)
             
             synced_count = 0
+            skipped_count = 0
             errors = 0
             
             for order in orders:
                 try:
                     order_id = str(order["order_id"])
+                    status_id = order.get("order_status_id")
+                    
+                    # Skip orders with invalid statuses
+                    # Status 0 = Unconfirmed, 7 = Canceled, etc.
+                    if status_id not in VALID_STATUSES:
+                        logger.debug("sync_order_skipped", order_id=order_id, status_id=status_id, reason="invalid_status")
+                        skipped_count += 1
+                        continue
                     
                     # 2. Upsert into Supabase
-                    # Map OpenCart status to our status if needed, or just store raw
-                    # We only upsert basic info here. Detailed info is fetched on demand or via other flows.
-                    
                     # Calculate total cost (revenue)
                     total = float(order.get("total", 0))
                     
@@ -193,8 +205,8 @@ class OrdersLogisticsAgent:
                     logger.error("sync_order_failed", order_id=order.get("order_id"), error=str(e))
                     errors += 1
             
-            logger.info("sync_orders_completed", synced=synced_count, errors=errors)
-            return {"status": "success", "synced": synced_count, "errors": errors}
+            logger.info("sync_orders_completed", synced=synced_count, skipped=skipped_count, errors=errors)
+            return {"status": "success", "synced": synced_count, "skipped": skipped_count, "errors": errors}
             
         except Exception as e:
             logger.error("sync_orders_failed", error=str(e))
