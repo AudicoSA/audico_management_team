@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { supabase, type OrderTracker } from '@/lib/supabase'
 
+import BookShipmentModal from '@/components/BookShipmentModal'
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderTracker[]>([])
   const [loading, setLoading] = useState(true)
@@ -10,6 +12,11 @@ export default function OrdersPage() {
   const [editingCell, setEditingCell] = useState<{ orderId: string, field: string } | null>(null)
   const [editValue, setEditValue] = useState<string>('')
   const [showCompleted, setShowCompleted] = useState(false)
+
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedOrderForBooking, setSelectedOrderForBooking] = useState<string | null>(null)
+  const [bookingLoading, setBookingLoading] = useState(false)
 
   useEffect(() => {
     fetchOrders()
@@ -115,16 +122,25 @@ export default function OrdersPage() {
     }
   }
 
+  const openBookingModal = (orderId: string) => {
+    setSelectedOrderForBooking(orderId)
+    setIsModalOpen(true)
+  }
 
+  const handleConfirmBooking = async (collectionAddress: any) => {
+    if (!selectedOrderForBooking) return
 
-  const bookShipment = async (orderId: string) => {
-    if (!confirm(`Are you sure you want to book a shipment for Order #${orderId}? (Dry Run)`)) return
-
+    setBookingLoading(true)
     try {
-      const response = await fetch('http://localhost:8000/shipments/create', {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const response = await fetch(`${apiUrl}/shipments/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: orderId, dry_run: true })
+        body: JSON.stringify({
+          order_id: selectedOrderForBooking,
+          dry_run: true,
+          collection_address: collectionAddress
+        })
       })
 
       const result = await response.json()
@@ -132,11 +148,14 @@ export default function OrdersPage() {
       if (!response.ok) throw new Error(result.detail || 'Failed to create shipment')
 
       alert(`Shipment created! Tracking: ${result.shipment.tracking_number}`)
+      setIsModalOpen(false)
       fetchOrders() // Refresh
 
     } catch (err: any) {
       console.error('Shipment booking failed:', err)
       alert(`Failed: ${err.message}`)
+    } finally {
+      setBookingLoading(false)
     }
   }
 
@@ -305,7 +324,7 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-3 py-1 text-center border-r border-gray-200">
                         <button
-                          onClick={() => bookShipment(order.order_no)}
+                          onClick={() => openBookingModal(order.order_no)}
                           className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs"
                           title="Book Shipment (Dry Run)"
                         >
@@ -328,6 +347,14 @@ export default function OrdersPage() {
           </div>
         </div>
       )}
+
+      <BookShipmentModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConfirm={handleConfirmBooking}
+        orderId={selectedOrderForBooking || ''}
+        loading={bookingLoading}
+      />
     </div>
   )
 }

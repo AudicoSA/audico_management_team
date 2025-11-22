@@ -1,28 +1,48 @@
-"""OpenCart REST API connector for order and product operations."""
-from typing import Any, Dict, Optional
-
-import httpx
-
+"""OpenCart Database connector using direct MySQL connection."""
+from typing import Any, Dict, Optional, List
+import pymysql
+import pymysql.cursors
 from src.utils.config import get_config
 from src.utils.logging import AgentLogger
 
 logger = AgentLogger("OpenCartConnector")
 
-
 class OpenCartConnector:
-    """Connector for OpenCart REST API."""
+    """Connector for OpenCart Database (Direct MySQL)."""
 
     def __init__(self):
-        """Initialize OpenCart API client."""
+        """Initialize OpenCart Database connection."""
         self.config = get_config()
-        self.base_url = self.config.opencart_base_url.rstrip("/")
-        self.client_id = self.config.opencart_client_id
-        self.client_secret = self.config.opencart_client_secret
-        self.session = httpx.AsyncClient(timeout=30.0)
-        logger.info("opencart_connector_initialized", base_url=self.base_url)
+        
+        # Database credentials from config/env
+        self.host = self.config.opencart_db_host
+        self.port = self.config.opencart_db_port
+        self.user = self.config.opencart_db_user
+        self.password = self.config.opencart_db_password
+        self.db_name = self.config.opencart_db_name
+        self.prefix = self.config.opencart_table_prefix or "oc_"
+        
+        logger.info("opencart_db_connector_initialized", host=self.host, db=self.db_name)
+
+    def _get_connection(self):
+        """Create and return a new database connection."""
+        try:
+            connection = pymysql.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.db_name,
+                cursorclass=pymysql.cursors.DictCursor,
+                connect_timeout=10
+            )
+            return connection
+        except Exception as e:
+            logger.error("db_connection_failed", error=str(e))
+            raise
 
     async def get_order(self, order_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch order details by order ID.
+        """Fetch order details by order ID directly from DB.
 
         Args:
             order_id: OpenCart order ID
@@ -30,69 +50,70 @@ class OpenCartConnector:
         Returns:
             Order data dictionary or None if not found
         """
+        connection = None
         try:
-            # OpenCart REST API endpoint (adjust based on actual implementation)
-            url = f"{self.base_url}/index.php?route=api/order/info&order_id={order_id}"
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                # Query main order table
+                sql = f"""
+                    SELECT 
+                        order_id, invoice_no, customer_id,
+                        firstname, lastname, email, telephone,
+                        order_status_id, total, currency_code,
+                        date_added, date_modified,
+                        shipping_method,
+                        shipping_firstname, shipping_lastname, shipping_company,
+                        shipping_address_1, shipping_address_2,
+                        shipping_city, shipping_postcode,
+                        shipping_zone, shipping_country_id, shipping_country
+                    FROM {self.prefix}order
+                    WHERE order_id = %s
+                    LIMIT 1
+                """
+                cursor.execute(sql, (order_id,))
+                order = cursor.fetchone()
 
-            response = await self.session.get(
-                url,
-                auth=(self.client_id, self.client_secret),
-            )
+                if not order:
+                    logger.warning("order_not_found_in_db", order_id=order_id)
+                    return None
 
-            if response.status_code == 404:
-                logger.warning("order_not_found", order_id=order_id)
-                return None
+                # Query order products
+                prod_sql = f"""
+                    SELECT name, model, quantity, price, total
+                    FROM {self.prefix}order_product
+                    WHERE order_id = %s
+                """
+                cursor.execute(prod_sql, (order_id,))
+                products = cursor.fetchall()
+                
+                # Add products to order dict
+                order['products'] = products
+                
+                # Format shipping address for convenience
+                order['shipping_address'] = {
+                    'firstname': order.get('shipping_firstname'),
+                    'lastname': order.get('shipping_lastname'),
+                    'company': order.get('shipping_company'),
+                    'address_1': order.get('shipping_address_1'),
+                    'address_2': order.get('shipping_address_2'),
+                    'city': order.get('shipping_city'),
+                    'postcode': order.get('shipping_postcode'),
+                    'zone': order.get('shipping_zone'),
+                    'country': order.get('shipping_country')
+                }
 
-            response.raise_for_status()
-            order_data = response.json()
+                logger.info("order_fetched_from_db", order_id=order_id)
+                return order
 
-            logger.info("order_fetched", order_id=order_id)
-            return order_data
-
-        except httpx.HTTPStatusError as e:
-            logger.error("get_order_failed", order_id=order_id, status=e.response.status_code)
-            raise
         except Exception as e:
-            logger.error("get_order_error", order_id=order_id, error=str(e))
-            raise
+            logger.error("get_order_db_error", order_id=order_id, error=str(e))
+            return None
+        finally:
+            if connection:
+                connection.close()
 
-    async def update_order_status(
-        self, order_id: str, status_id: int, comment: Optional[str] = None
-    ) -> None:
-        """Update order status.
-
-        Args:
-            order_id: OpenCart order ID
-            status_id: Status ID (e.g., 2=Processing, 3=Shipped, 5=Complete, 7=Cancelled)
-            comment: Optional comment/note
-        """
-        try:
-            url = f"{self.base_url}/index.php?route=api/order/history"
-
-            payload = {
-                "order_id": order_id,
-                "order_status_id": status_id,
-            }
-            if comment:
-                payload["comment"] = comment
-
-            response = await self.session.post(
-                url,
-                json=payload,
-                auth=(self.client_id, self.client_secret),
-            )
-
-            response.raise_for_status()
-            logger.info("order_status_updated", order_id=order_id, status_id=status_id)
-
-        except Exception as e:
-            logger.error("update_order_status_failed", order_id=order_id, error=str(e))
-            raise
-
-    async def get_recent_orders(
-        self, days_back: int = 30, limit: int = 50
-    ) -> list[Dict[str, Any]]:
-        """Fetch recent orders from OpenCart.
+    async def get_recent_orders(self, days_back: int = 30, limit: int = 50) -> list[Dict[str, Any]]:
+        """Fetch recent orders from OpenCart DB.
 
         Args:
             days_back: Number of days back to fetch (default: 30)
@@ -101,68 +122,71 @@ class OpenCartConnector:
         Returns:
             List of order dictionaries
         """
+        connection = None
         try:
-            # OpenCart REST API endpoint for order list
-            url = f"{self.base_url}/index.php?route=api/order/list"
-
-            params = {
-                "limit": limit,
-                "sort": "date_added",
-                "order": "DESC",
-            }
-
-            response = await self.session.get(
-                url,
-                params=params,
-                auth=(self.client_id, self.client_secret),
-            )
-
-            response.raise_for_status()
-            data = response.json()
-
-            orders = data.get("orders", []) if isinstance(data, dict) else data
-
-            logger.info("orders_fetched", count=len(orders))
-            return orders
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"""
+                    SELECT 
+                        order_id, firstname, lastname, email, telephone,
+                        order_status_id, total, date_added
+                    FROM {self.prefix}order
+                    ORDER BY date_added DESC
+                    LIMIT %s
+                """
+                cursor.execute(sql, (limit,))
+                orders = cursor.fetchall()
+                
+                logger.info("recent_orders_fetched_from_db", count=len(orders))
+                return orders
 
         except Exception as e:
-            logger.error("get_recent_orders_error", error=str(e))
-            raise
+            logger.error("get_recent_orders_db_error", error=str(e))
+            return []
+        finally:
+            if connection:
+                connection.close()
 
-    async def get_product(self, product_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch product details by product ID or SKU.
-
-        Args:
-            product_id: Product ID or SKU
-
-        Returns:
-            Product data dictionary or None if not found
+    async def update_order_status(
+        self, order_id: str, status_id: int, comment: Optional[str] = None
+    ) -> None:
+        """Update order status in DB.
+        
+        WARNING: This writes directly to OpenCart tables. Use with caution.
         """
+        connection = None
         try:
-            url = f"{self.base_url}/index.php?route=api/product/info&product_id={product_id}"
-
-            response = await self.session.get(
-                url,
-                auth=(self.client_id, self.client_secret),
-            )
-
-            if response.status_code == 404:
-                logger.warning("product_not_found", product_id=product_id)
-                return None
-
-            response.raise_for_status()
-            product_data = response.json()
-
-            logger.info("product_fetched", product_id=product_id)
-            return product_data
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                # 1. Update main order table
+                update_sql = f"""
+                    UPDATE {self.prefix}order
+                    SET order_status_id = %s, date_modified = NOW()
+                    WHERE order_id = %s
+                """
+                cursor.execute(update_sql, (status_id, order_id))
+                
+                # 2. Insert into history
+                history_sql = f"""
+                    INSERT INTO {self.prefix}order_history 
+                    (order_id, order_status_id, notify, comment, date_added)
+                    VALUES (%s, %s, 0, %s, NOW())
+                """
+                cursor.execute(history_sql, (order_id, status_id, comment or ""))
+                
+            connection.commit()
+            logger.info("order_status_updated_db", order_id=order_id, status_id=status_id)
 
         except Exception as e:
-            logger.error("get_product_error", product_id=product_id, error=str(e))
+            logger.error("update_order_status_db_failed", order_id=order_id, error=str(e))
             raise
+        finally:
+            if connection:
+                connection.close()
 
     async def close(self) -> None:
-        """Close HTTP session."""
-        await self.session.aclose()
+        """Close connection (no-op for per-request connection model)."""
+        pass
 
 
 # Global instance

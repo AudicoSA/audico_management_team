@@ -76,14 +76,20 @@ class OrdersLogisticsAgent:
             }
             
             # Collection address (Audico HQ - hardcoded for now or fetch from config)
-            collection_address = {
-                "company": "Audico Online",
-                "street_address": "123 Example Street", # TODO: Get from config
-                "local_area": "Sandton",
-                "city": "Johannesburg",
-                "code": "2000",
-                "country_code": "ZA",
-            }
+            # Allow override from input data (for Drop Shipping)
+            custom_collection = data.get("collection_address")
+            if custom_collection:
+                collection_address = custom_collection
+            else:
+                # Default Placeholder
+                collection_address = {
+                    "company": "Audico Online",
+                    "street_address": "123 Example Street", # Placeholder
+                    "local_area": "Sandton",
+                    "city": "Johannesburg",
+                    "code": "2000",
+                    "country_code": "ZA",
+                }
 
             # 3. Prepare parcels
             # Simplified: 1 parcel, 2kg
