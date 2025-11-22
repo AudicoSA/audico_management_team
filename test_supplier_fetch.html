@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Supabase Supplier Fetch</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <h1>Testing Supplier Fetch</h1>
+    <div id="result"></div>
+    
+    <script>
+        // Replace with your actual values
+        const SUPABASE_URL = 'https://ajdehycoypilsegmxbto.supabase.co'
+        const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY_HERE' // You'll need to paste this
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+        
+        async function testFetch() {
+            console.log('Testing supplier fetch...')
+            const resultDiv = document.getElementById('result')
+            
+            try {
+                const { data, error } = await supabase
+                    .from('supplier_addresses')
+                    .select('*')
+                    .order('name')
+                
+                if (error) {
+                    console.error('Error:', error)
+                    resultDiv.innerHTML = `<pre style="color: red;">Error: ${JSON.stringify(error, null, 2)}</pre>`
+                } else {
+                    console.log('Success! Found suppliers:', data)
+                    resultDiv.innerHTML = `<pre style="color: green;">Success! Found ${data.length} suppliers:\n${JSON.stringify(data.slice(0, 3), null, 2)}</pre>`
+                }
+            } catch (e) {
+                console.error('Exception:', e)
+                resultDiv.innerHTML = `<pre style="color: red;">Exception: ${e.message}</pre>`
+            }
+        }
+        
+        testFetch()
+    </script>
+</body>
+</html>
