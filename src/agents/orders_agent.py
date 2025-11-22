@@ -156,6 +156,50 @@ class OrdersLogisticsAgent:
             return {"status": "success", "tracking": result}
         return {"status": "error", "error": "Tracking info not found"}
 
+    async def sync_orders(self) -> Dict[str, Any]:
+        """
+        Sync recent orders from OpenCart to Supabase.
+        """
+        logger.info("sync_orders_started")
+        try:
+            # 1. Fetch recent orders
+            orders = await self.opencart.get_recent_orders(limit=20)
+            
+            synced_count = 0
+            errors = 0
+            
+            for order in orders:
+                try:
+                    order_id = str(order["order_id"])
+                    
+                    # 2. Upsert into Supabase
+                    # Map OpenCart status to our status if needed, or just store raw
+                    # We only upsert basic info here. Detailed info is fetched on demand or via other flows.
+                    
+                    # Calculate total cost (revenue)
+                    total = float(order.get("total", 0))
+                    
+                    await self.supabase.upsert_order_tracker(
+                        order_no=order_id,
+                        order_name=f"Order #{order_id}", # Placeholder name
+                        source="opencart_sync",
+                        cost=total, # Revenue
+                        notes=f"Customer: {order.get('firstname')} {order.get('lastname')} | Email: {order.get('email')}",
+                        last_modified_by="system_sync"
+                    )
+                    synced_count += 1
+                    
+                except Exception as e:
+                    logger.error("sync_order_failed", order_id=order.get("order_id"), error=str(e))
+                    errors += 1
+            
+            logger.info("sync_orders_completed", synced=synced_count, errors=errors)
+            return {"status": "success", "synced": synced_count, "errors": errors}
+            
+        except Exception as e:
+            logger.error("sync_orders_failed", error=str(e))
+            return {"status": "error", "error": str(e)}
+
     async def _get_rates(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Get shipping rates."""
         # TODO: Implement full rate fetching logic

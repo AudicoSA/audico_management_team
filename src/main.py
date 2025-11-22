@@ -38,10 +38,31 @@ async def email_polling_loop():
         await asyncio.sleep(interval)
 
 
+# Background task for order polling
+order_poll_task = None
+
+async def order_polling_loop():
+    """Background task that polls OpenCart orders periodically."""
+    # Default to 30 minutes if not configured
+    interval = 1800 
+    
+    while True:
+        try:
+            logger.info("order_poll_started")
+            agent = get_orders_agent()
+            result = await agent.sync_orders()
+            logger.info("order_poll_completed", **result)
+        except Exception as e:
+            logger.error("order_poll_error", error=str(e))
+
+        # Wait before next poll
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan (startup and shutdown)."""
-    global email_poll_task
+    global email_poll_task, order_poll_task
 
     # Startup
     logger.info("application_starting")
@@ -52,6 +73,11 @@ async def lifespan(app: FastAPI):
         email_poll_task = asyncio.create_task(email_polling_loop())
         logger.info("email_polling_started", interval=config.gmail_polling_interval_seconds)
 
+    # Start order polling in background (always on for now, or check config)
+    # We'll enable it by default for Stage 2
+    order_poll_task = asyncio.create_task(order_polling_loop())
+    logger.info("order_polling_started", interval=1800)
+
     yield
 
     # Shutdown
@@ -60,6 +86,13 @@ async def lifespan(app: FastAPI):
         email_poll_task.cancel()
         try:
             await email_poll_task
+        except asyncio.CancelledError:
+            pass
+            
+    if order_poll_task:
+        order_poll_task.cancel()
+        try:
+            await order_poll_task
         except asyncio.CancelledError:
             pass
 
