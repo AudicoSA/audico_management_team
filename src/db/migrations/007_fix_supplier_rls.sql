@@ -1,14 +1,19 @@
--- Update RLS policy for supplier_addresses to allow anonymous read access
--- This is safe since supplier addresses are not sensitive data
+-- Fix RLS policy for supplier_addresses to allow anonymous read access
+-- Run this in Supabase SQL Editor
 
--- Drop existing policies
+-- First, drop ALL existing policies
 DROP POLICY IF EXISTS "Allow read access to authenticated users" ON supplier_addresses;
 DROP POLICY IF EXISTS "Allow insert/update access to authenticated users" ON supplier_addresses;
+DROP POLICY IF EXISTS "Allow read access to all users" ON supplier_addresses;
 
--- Create new policies that allow anonymous read access
-CREATE POLICY "Allow read access to all users" ON supplier_addresses
-    FOR SELECT USING (true);
+-- Create new policy that allows ANONYMOUS read access
+CREATE POLICY "Enable read access for all users" ON supplier_addresses
+    FOR SELECT 
+    USING (true);
 
--- Keep write access restricted to authenticated users
-CREATE POLICY "Allow insert/update access to authenticated users" ON supplier_addresses
-    FOR ALL TO authenticated USING (true);
+-- Keep write access restricted to authenticated users only
+CREATE POLICY "Enable write access for authenticated users" ON supplier_addresses
+    FOR ALL 
+    TO authenticated 
+    USING (true) 
+    WITH CHECK (true);

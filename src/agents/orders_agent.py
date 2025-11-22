@@ -182,7 +182,7 @@ class OrdersLogisticsAgent:
                     await self.supabase.upsert_order_tracker(
                         order_no=order_id,
                         order_name=f"Order #{order_id}", # Placeholder name
-                        source="opencart_sync",
+                        source="opencart",  # Changed from opencart_sync
                         cost=total, # Revenue
                         notes=f"Customer: {order.get('firstname')} {order.get('lastname')} | Email: {order.get('email')}",
                         last_modified_by="system_sync"
