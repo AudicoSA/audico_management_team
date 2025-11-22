@@ -27,7 +27,22 @@ export type EmailLog = {
   updated_at: string
 }
 
-export type OrderTracker = {
+export interface Supplier {
+  id: string
+  name: string
+  company: string
+  street_address: string
+  local_area: string
+  city: string
+  code: string
+  country_code: string
+  contact_name?: string
+  contact_phone?: string
+  contact_email?: string
+  created_at?: string
+}
+
+export interface OrderTracker {
   order_no: string
   order_name: string | null
   supplier: string | null

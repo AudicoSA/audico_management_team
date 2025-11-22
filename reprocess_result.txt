@@ -1,0 +1,38 @@
+
+--- Extracted Details ---
+{
+  "invoice_no": "28771",
+  "quote_no": null,
+  "amount": 15990.0,
+  "supplier_name": "Audico Online Store"
+}
+
+--- Current DB State (28771) ---
+{
+  "order_no": "28771",
+  "created_at": "2025-11-19T16:20:08.549183+00:00",
+  "updated_at": "2025-11-20T05:35:18.382621+00:00",
+  "order_name": "Optoma X309st - Short throw bright and compact projector",
+  "supplier": "supplier@test.com",
+  "notes": "Customer: Reynardt Olivier | Email: reynardt@readygolfsa.co.za",
+  "cost": 1000.0,
+  "invoice_no": "IO104536",
+  "order_paid": true,
+  "supplier_amount": 500.0,
+  "shipping": 100.0,
+  "profit": 400.0,
+  "updates": "[2025-11-20 07:35] Received SUPPLIER_INVOICE from supplier@test.com\n[2025-11-20 07:25] Received SUPPLIER_INVOICE from supplier@test.com\nReceived SUPPLIER_INVOICE from Kenny Audico <kenny@audico.co.za>",
+  "owner_wade": false,
+  "owner_lucky": false,
+  "owner_kenny": false,
+  "owner_accounts": false,
+  "flag_done": false,
+  "flag_urgent": false,
+  "source": "agent",
+  "last_modified_by": "system",
+  "deleted_at": null,
+  "supplier_invoice_no": "for",
+  "supplier_quote_no": null,
+  "supplier_status": "Invoiced",
+  "supplier_invoice_url": "https://ajdehycoypilsegmxbto.supabase.co/storage/v1/object/public/invoices/invoices/2025/11/28771_invoice_INV-999.pdf"
+}
