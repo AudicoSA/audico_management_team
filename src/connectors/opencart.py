@@ -184,6 +184,177 @@ class OpenCartConnector:
             if connection:
                 connection.close()
 
+    async def get_product_by_sku(self, sku: str) -> Optional[Dict[str, Any]]:
+        """Get product details by SKU from OpenCart database.
+        
+        Args:
+            sku: Product SKU
+            
+        Returns:
+            Product dict with id, model, sku, price, quantity or None
+        """
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"""
+                    SELECT 
+                        product_id, model, sku, price, quantity, status
+                    FROM {self.prefix}product
+                    WHERE sku = %s
+                    LIMIT 1
+                """
+                cursor.execute(sql, (sku,))
+                product = cursor.fetchone()
+                
+                if product:
+                    logger.info("product_found_by_sku", sku=sku, product_id=product['product_id'])
+                    return product
+                else:
+                    logger.warning("product_not_found", sku=sku)
+                    return None
+                    
+        except Exception as e:
+            logger.error("get_product_by_sku_error", sku=sku, error=str(e))
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    async def update_product_price(self, product_id: int, price: float) -> bool:
+        """Update product price directly in OpenCart database.
+        
+        Args:
+            product_id: OpenCart product_id
+            price: New price
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"UPDATE {self.prefix}product SET price = %s WHERE product_id = %s"
+                cursor.execute(sql, (price, product_id))
+            connection.commit()
+            
+            logger.info("product_price_updated", product_id=product_id, price=price)
+            return True
+            
+        except Exception as e:
+            if connection:
+                connection.rollback()
+            logger.error("update_price_failed", product_id=product_id, error=str(e))
+            return False
+        finally:
+            if connection:
+                connection.close()
+
+    async def update_product_stock(self, product_id: int, quantity: int) -> bool:
+        """Update product stock quantity directly in OpenCart database.
+        
+        Args:
+            product_id: OpenCart product_id
+            quantity: New stock quantity
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"UPDATE {self.prefix}product SET quantity = %s WHERE product_id = %s"
+                cursor.execute(sql, (quantity, product_id))
+            connection.commit()
+            
+            logger.info("product_stock_updated", product_id=product_id, quantity=quantity)
+            return True
+            
+        except Exception as e:
+            if connection:
+                connection.rollback()
+            logger.error("update_stock_failed", product_id=product_id, error=str(e))
+            return False
+        finally:
+            if connection:
+                connection.close()
+
+    async def bulk_update_products(self, updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Bulk update multiple products in a single transaction.
+        
+        Args:
+            updates: List of dicts with keys: product_id, price (optional), quantity (optional)
+            
+        Returns:
+            Dict with success count, failed count, and errors
+        """
+        connection = None
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        try:
+            connection = self._get_connection()
+            
+            for update in updates:
+                try:
+                    product_id = update['product_id']
+                    
+                    with connection.cursor() as cursor:
+                        # Build dynamic UPDATE query
+                        set_clauses = []
+                        params = []
+                        
+                        if 'price' in update:
+                            set_clauses.append("price = %s")
+                            params.append(update['price'])
+                        
+                        if 'quantity' in update:
+                            set_clauses.append("quantity = %s")
+                            params.append(update['quantity'])
+                        
+                        if not set_clauses:
+                            continue
+                        
+                        params.append(product_id)
+                        sql = f"UPDATE {self.prefix}product SET {', '.join(set_clauses)} WHERE product_id = %s"
+                        cursor.execute(sql, params)
+                    
+                    success_count += 1
+                    
+                except Exception as e:
+                    failed_count += 1
+                    errors.append({
+                        'product_id': update.get('product_id'),
+                        'error': str(e)
+                    })
+            
+            connection.commit()
+            logger.info("bulk_update_completed", success=success_count, failed=failed_count)
+            
+            return {
+                'success': True,
+                'updated': success_count,
+                'failed': failed_count,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            if connection:
+                connection.rollback()
+            logger.error("bulk_update_failed", error=str(e))
+            return {
+                'success': False,
+                'updated': 0,
+                'failed': len(updates),
+                'errors': [{'error': str(e)}]
+            }
+        finally:
+            if connection:
+                connection.close()
+
     async def close(self) -> None:
         """Close connection (no-op for per-request connection model)."""
         pass
