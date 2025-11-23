@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS supplier_pricing_rules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    supplier_id UUID REFERENCES suppliers(id) UNIQUE NOT NULL,
+    supplier_id UUID REFERENCES supplier_addresses(id) UNIQUE NOT NULL,
     
     -- Pricing type: 'cost' (needs markup), 'retail' (use as-is), 'mixed' (varies by product)
     pricing_type TEXT NOT NULL CHECK (pricing_type IN ('cost', 'retail', 'mixed')) DEFAULT 'cost',
@@ -51,5 +51,5 @@ SELECT
     'cost',  -- Default to cost pricing
     30.00,   -- Default 30% markup
     'Default pricing rule - please configure via dashboard'
-FROM suppliers
+FROM supplier_addresses
 ON CONFLICT (supplier_id) DO NOTHING;
