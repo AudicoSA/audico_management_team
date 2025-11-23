@@ -46,6 +46,52 @@ class StockListingsAgent:
                    agent="StockListingsAgent", 
                    model="gemini-2.0-flash-exp")
     
+    async def get_pricing_rule(self, supplier_id: str) -> Optional[Dict]:
+        """Get pricing rule for a supplier."""
+        try:
+            response = self.supabase.client.table("supplier_pricing_rules")\
+                .select("*")\
+                .eq("supplier_id", supplier_id)\
+                .single()\
+                .execute()
+            
+            if response.data:
+                logger.info("pricing_rule_found", supplier_id=supplier_id)
+                return response.data
+            return None
+        except Exception as e:
+            logger.warning("pricing_rule_not_found", supplier_id=supplier_id, error=str(e))
+            return None
+    
+    async def calculate_retail_price(
+        self, 
+        cost_price: float, 
+        supplier_id: str, 
+        category: Optional[str] = None
+    ) -> float:
+        """Calculate retail price from cost using supplier markup rules."""
+        rule = await self.get_pricing_rule(supplier_id)
+        
+        if not rule:
+            markup_pct = 30.0  # Default
+            logger.warning("using_default_markup", supplier_id=supplier_id)
+        else:
+            pricing_type = rule.get('pricing_type', 'cost')
+            
+            if pricing_type == 'retail':
+                return cost_price  # Use as-is
+            
+            markup_pct = rule.get('default_markup_pct', 30.0)
+            
+            # Check category-specific markup
+            if category and rule.get('category_markups'):
+                category_markups = rule.get('category_markups', {})
+                if category in category_markups:
+                    markup_pct = category_markups[category]
+        
+        retail_price = cost_price * (1 + (markup_pct / 100.0))
+        return round(retail_price, 2)
+    
     async def process_price_list(
         self,
         file_data: bytes,
@@ -237,36 +283,77 @@ Extract ALL products - do not skip any rows.
     
     async def _detect_changes(self, upload_id: str, supplier_name: str, product: ProductData) -> int:
         """
-        Compare product data with OpenCart and create stock_updates for differences.
-        Returns number of changes detected.
+        Compare product data with OpenCart and create price_change_queue for differences.
+        Applies pricing rules before comparison.
         """
         changes = 0
         
-        # Check price change
-        if product.price is not None:
-            self.supabase.client.table("stock_updates").insert({
-                "sku": product.sku,
-                "field_name": "price",
-                "old_value": None,  # Would fetch from OpenCart
-                "new_value": str(product.price),
-                "upload_id": upload_id,
-                "supplier_name": supplier_name,
-                "status": "pending"
-            }).execute()
-            changes += 1
+        try:
+            # Get OpenCart product
+            oc_product = await self.opencart.get_product_by_sku(product.sku)
+            if not oc_product:
+                logger.debug("product_not_in_opencart", sku=product.sku)
+                return 0
+            
+            # Get supplier ID from supplier_name
+            supplier_response = self.supabase.client.table("suppliers")\
+                .select("id")\
+                .eq("name", supplier_name)\
+                .single()\
+                .execute()
+            
+            supplier_id = supplier_response.data['id'] if supplier_response.data else None
+            
+            # Check price change with pricing rules
+            if product.price is not None and supplier_id:
+                # Calculate retail price using pricing rules
+                retail_price = await self.calculate_retail_price(
+                    product.price, 
+                    supplier_id,
+                    product.name  # Use name as category for now
+                )
+                
+                current_price = float(oc_product.get('price', 0))
+                
+                # Calculate change percentage
+                if current_price > 0:
+                    price_change_pct = ((retail_price - current_price) / current_price) * 100
+                else:
+                    price_change_pct = 100.0
+                
+                # Queue if change > 10%
+                if abs(price_change_pct) > 10.0:
+                    self.supabase.client.table("price_change_queue").insert({
+                        "product_id": oc_product['product_id'],
+                        "sku": product.sku,
+                        "product_name": product.name,
+                        "current_price": current_price,
+                        "new_price": retail_price,
+                        "price_change_pct": round(price_change_pct, 2),
+                        "supplier_id": supplier_id,
+                        "supplier_name": supplier_name,
+                        "status": "pending"
+                    }).execute()
+                    changes += 1
+            
+            # Check stock change
+            if product.stock is not None:
+                current_stock = int(oc_product.get('quantity', 0))
+                if product.stock != current_stock:
+                    # Log stock change
+                    self.supabase.client.table("stock_sync_log").insert({
+                        "product_id": oc_product['product_id'],
+                        "sku": product.sku,
+                        "field_name": "quantity",
+                        "old_value": current_stock,
+                        "new_value": product.stock,
+                        "changed_by": "stock_agent",
+                        "change_source": "agent"
+                    }).execute()
+                    changes += 1
         
-        # Check stock change
-        if product.stock is not None:
-            self.supabase.client.table("stock_updates").insert({
-                "sku": product.sku,
-                "field_name": "stock",
-                "old_value": None,  # Would fetch from OpenCart
-                "new_value": str(product.stock),
-                "upload_id": upload_id,
-                "supplier_name": supplier_name,
-                "status": "pending"
-            }).execute()
-            changes += 1
+        except Exception as e:
+            logger.error("detect_changes_failed", sku=product.sku, error=str(e))
         
         return changes
     
