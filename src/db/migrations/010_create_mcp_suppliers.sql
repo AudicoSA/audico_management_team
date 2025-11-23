@@ -1,44 +1,51 @@
--- Create suppliers table for MCP feed configuration
--- This is separate from supplier_addresses (shipping addresses)
+-- Add missing columns to existing suppliers table and populate MCP suppliers
+-- Valid type values: 'scrape', 'feed', 'manual'
 
-CREATE TABLE IF NOT EXISTS suppliers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT UNIQUE NOT NULL,
-    supplier_type TEXT CHECK (supplier_type IN ('api', 'scraper', 'feed', 'manual')),
-    is_active BOOLEAN DEFAULT true,
-    notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Insert MCP suppliers from your existing setup
-INSERT INTO suppliers (name, supplier_type, is_active, notes) VALUES
-    ('Nology', 'api', true, 'Nology API integration - 1,177 products'),
-    ('Stock2Shop', 'feed', true, 'Stock2Shop Elasticsearch feed'),
-    ('Solution Technologies', 'feed', true, 'Solution Tech feed'),
-    ('Esquire', 'feed', true, 'Esquire feed system'),
-    ('Planet World', 'scraper', true, 'Planet World web scraper'),
-    ('Connoisseur', 'feed', true, 'Connoisseur feed'),
-    ('Homemation', 'scraper', true, 'Homemation scraper'),
-    ('Google Merchant', 'feed', true, 'Google Merchant feed')
-ON CONFLICT (name) DO NOTHING;
-
--- Create index
-CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers(is_active);
-
--- Update trigger
-CREATE OR REPLACE FUNCTION update_suppliers_timestamp()
-RETURNS TRIGGER AS $$
+-- Add supplier_type column if it doesn't exist
+DO $$ 
 BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='suppliers' AND column_name='supplier_type') THEN
+        ALTER TABLE suppliers ADD COLUMN supplier_type TEXT CHECK (supplier_type IN ('api', 'scraper', 'feed', 'manual'));
+    END IF;
+END $$;
 
-CREATE TRIGGER suppliers_updated
-    BEFORE UPDATE ON suppliers
-    FOR EACH ROW
-    EXECUTE FUNCTION update_suppliers_timestamp();
+-- Add is_active column if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='suppliers' AND column_name='is_active') THEN
+        ALTER TABLE suppliers ADD COLUMN is_active BOOLEAN DEFAULT true;
+    END IF;
+END $$;
+
+-- Add notes column if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='suppliers' AND column_name='notes') THEN
+        ALTER TABLE suppliers ADD COLUMN notes TEXT;
+    END IF;
+END $$;
+
+-- Insert MCP suppliers with correct type values
+INSERT INTO suppliers (name, type, supplier_type, is_active, notes) VALUES
+    ('Nology', 'feed', 'api', true, 'Nology API integration - 1,177 products'),
+    ('Stock2Shop', 'feed', 'feed', true, 'Stock2Shop Elasticsearch feed'),
+    ('Solution Technologies', 'feed', 'feed', true, 'Solution Tech feed'),
+    ('Esquire', 'feed', 'feed', true, 'Esquire feed system'),
+    ('Planet World', 'scrape', 'scraper', true, 'Planet World web scraper'),
+    ('Connoisseur', 'feed', 'feed', true, 'Connoisseur feed'),
+    ('Homemation', 'scrape', 'scraper', true, 'Homemation scraper'),
+    ('Google Merchant', 'feed', 'feed', true, 'Google Merchant feed')
+ON CONFLICT (name) DO UPDATE SET
+    type = EXCLUDED.type,
+    supplier_type = EXCLUDED.supplier_type,
+    is_active = EXCLUDED.is_active,
+    notes = EXCLUDED.notes;
+
+-- Create index if it doesn't exist
+CREATE INDEX IF NOT EXISTS idx_suppliers_active ON suppliers(is_active);
 
 -- Grant permissions
 GRANT SELECT, INSERT, UPDATE ON suppliers TO authenticated;
