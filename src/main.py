@@ -114,6 +114,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register API routers
+from src.api.mcp_sync import router as mcp_sync_router
+from src.api.stock import router as stock_router
+
+app.include_router(mcp_sync_router)
+app.include_router(stock_router)
+
 
 @app.get("/")
 async def root():

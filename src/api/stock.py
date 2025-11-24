@@ -5,7 +5,7 @@ from src.connectors.opencart import get_opencart_connector
 from src.connectors.supabase import get_supabase_connector
 from src.utils.logging import AgentLogger
 
-router = APIRouter()
+router = APIRouter(prefix="/api/stock", tags=["stock"])
 logger = AgentLogger("StockAPI")
 
 @router.post("/apply-changes")
