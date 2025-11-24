@@ -117,9 +117,11 @@ app.add_middleware(
 # Register API routers
 from src.api.mcp_sync import router as mcp_sync_router
 from src.api.stock import router as stock_router
+from src.api.products import router as products_router
 
 app.include_router(mcp_sync_router)
 app.include_router(stock_router)
+app.include_router(products_router)
 
 
 @app.get("/")
