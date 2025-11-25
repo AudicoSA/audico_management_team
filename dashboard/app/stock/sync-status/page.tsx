@@ -67,7 +67,7 @@ export default function MCPSyncStatusPage() {
         setSyncing(true)
 
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/mcp/sync-all`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/mcp/sync-all`, {
                 method: 'POST'
             })
 
@@ -133,8 +133,8 @@ export default function MCPSyncStatusPage() {
                                     key={session.id}
                                     onClick={() => setSelectedSession(session.id)}
                                     className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${selectedSession === session.id
-                                            ? 'border-blue-500 bg-blue-50'
-                                            : 'border-gray-200 hover:border-gray-300'
+                                        ? 'border-blue-500 bg-blue-50'
+                                        : 'border-gray-200 hover:border-gray-300'
                                         }`}
                                 >
                                     <div className="flex items-center justify-between mb-2">
@@ -174,8 +174,8 @@ export default function MCPSyncStatusPage() {
                                         <div className="flex items-center justify-between mb-2">
                                             <span className="font-medium text-gray-900">{log.supplier_name}</span>
                                             <span className={`px-2 py-1 rounded text-xs font-medium ${log.status === 'success'
-                                                    ? 'bg-green-100 text-green-700'
-                                                    : 'bg-red-100 text-red-700'
+                                                ? 'bg-green-100 text-green-700'
+                                                : 'bg-red-100 text-red-700'
                                                 }`}>
                                                 {log.status}
                                             </span>
