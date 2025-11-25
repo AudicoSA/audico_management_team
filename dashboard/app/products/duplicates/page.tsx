@@ -10,19 +10,6 @@ interface Duplicate {
     names?: string
     skus?: string
 }
-
-export default function DuplicatesPage() {
-    const [duplicateSkus, setDuplicateSkus] = useState<Duplicate[]>([])
-    const [duplicateNames, setDuplicateNames] = useState<Duplicate[]>([])
-    const [orphaned, setOrphaned] = useState<any[]>([])
-    const [missing, setMissing] = useState<any[]>([])
-    const [loading, setLoading] = useState(true)
-    const [activeTab, setActiveTab] = useState<'skus' | 'names' | 'orphaned' | 'missing'>('skus')
-            ])
-
-    const [skusData, namesData, orphanedData, missingData] = await Promise.all([
-        skusRes.json(),
-        namesRes.json(),
         orphanedRes.json(),
         missingRes.json()
     ])
