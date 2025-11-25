@@ -12,7 +12,7 @@ from src.utils.logging import AgentLogger
 
 logger = AgentLogger("MCPSyncOrchestrator")
 
-# MCP HTTP Service URL
+# MCP HTTP Service URL (configured via Railway environment variable)
 MCP_SERVICE_URL = os.getenv("MCP_SERVICE_URL", "http://localhost:3000")
 
 
