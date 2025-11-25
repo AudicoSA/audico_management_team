@@ -37,7 +37,8 @@ const MCP_SERVERS = {
 };
 
 /**
- * Execute npm run sync for a specific MCP server
+ * Execute sync script for a specific MCP server
+ * Directly runs node instead of npm to avoid shell dependency
  */
 async function runMCPSync(serverKey) {
     const server = MCP_SERVERS[serverKey];
@@ -46,17 +47,19 @@ async function runMCPSync(serverKey) {
     }
 
     const serverPath = join(__dirname, '..', server.path);
+    const syncScriptPath = join(serverPath, 'dist', 'sync.js');
 
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         let stdout = '';
         let stderr = '';
 
-        console.log(`[${server.name}] Starting sync in ${serverPath}`);
+        console.log(`[${server.name}] Starting sync: node ${syncScriptPath}`);
 
-        const child = spawn('npm', ['run', 'sync'], {
+        // Execute node directly without shell
+        const child = spawn('node', [syncScriptPath], {
             cwd: serverPath,
-            shell: true,
+            shell: false,  // Don't use shell - avoids /bin/sh dependency
             env: { ...process.env }
         });
 
