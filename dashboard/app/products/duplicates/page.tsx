@@ -10,14 +10,14 @@ interface Duplicate {
     names?: string
     skus?: string
 }
-        orphanedRes.json(),
-        missingRes.json()
+orphanedRes.json(),
+    missingRes.json()
     ])
 
-    setDuplicateSkus(skusData.duplicates || [])
-    setDuplicateNames(namesData.duplicates || [])
-    setOrphaned(orphanedData.orphaned || [])
-    setMissing(missingData.missing || [])
+setDuplicateSkus(skusData.duplicates || [])
+setDuplicateNames(namesData.duplicates || [])
+setOrphaned(orphanedData.orphaned || [])
+setMissing(missingData.missing || [])
 } catch (error) {
     console.error('Failed to fetch data:', error)
 } finally {
@@ -198,22 +198,10 @@ return (
                                         These products exist in supplier feeds but haven't been pushed to OpenCart yet.
                                     </p>
                                     {missing.slice(0, 50).map((product, idx) => (
-                                        <div key={idx} className="border border-gray-200 rounded-lg p-3 mb-2">
-                                            <div className="text-sm">
-                                                <strong>SKU:</strong> {product.sku} | <strong>Name:</strong> {product.product_name}
-                                            </div>
-                                            <div className="text-xs text-gray-500 mt-1">
-                                                Cost: R{product.cost_price?.toFixed(2) || 'N/A'}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
                     )}
-                </div>
+                                </div>
             </div>
         </div>
-    </div>
-)
+            </div>
+            )
 }
