@@ -1,9 +1,9 @@
 """
 MCP Sync Orchestration Service
-Triggers all MCP supplier feeds to sync data into Supabase
+Triggers all MCP supplier feeds to sync data into Supabase via HTTP
 """
 import asyncio
-import subprocess
+import httpx
 import os
 from datetime import datetime
 from typing import Dict, List
@@ -12,23 +12,25 @@ from src.utils.logging import AgentLogger
 
 logger = AgentLogger("MCPSyncOrchestrator")
 
-# Path to MCP servers directory
-MCP_SERVERS_PATH = os.getenv("MCP_SERVERS_PATH", "D:\\AudicoAI\\Audico Final Quote System\\audico-mcp-servers")
+# MCP HTTP Service URL
+MCP_SERVICE_URL = os.getenv("MCP_SERVICE_URL", "http://localhost:3000")
+
 
 # MCP servers to sync (in order)
+# Each entry maps to an endpoint on the MCP HTTP service
 MCP_SERVERS = [
-    {"name": "Nology", "path": "mcp-feed-nology", "enabled": True},
-    {"name": "Stock2Shop", "path": "mcp-feed-stock2shop", "enabled": True},
-    {"name": "Solution Technologies", "path": "mcp-feed-solution-technologies", "enabled": True},
-    {"name": "Esquire", "path": "mcp-feed-esquire", "enabled": True},
-    {"name": "Scoop", "path": "mcp-feed-scoop", "enabled": True},
-    {"name": "Smart Homes", "path": "mcp-feed-smart-homes", "enabled": True},
-    {"name": "Connoisseur", "path": "mcp-feed-connoisseur", "enabled": True},
-    {"name": "ProAudio", "path": "mcp-feed-proaudio", "enabled": True},
-    {"name": "Planet World", "path": "mcp-feed-planetworld", "enabled": True},
+    {"name": "Nology", "endpoint": "nology", "enabled": True},
+    {"name": "Stock2Shop", "endpoint": "stock2shop", "enabled": True},
+    {"name": "Solution Technologies", "endpoint": "solution-technologies", "enabled": True},
+    {"name": "Esquire", "endpoint": "esquire", "enabled": True},
+    {"name": "Scoop", "endpoint": "scoop", "enabled": True},
+    {"name": "Smart Homes", "endpoint": "smart-homes", "enabled": True},
+    {"name": "Connoisseur", "endpoint": "connoisseur", "enabled": True},
+    {"name": "ProAudio", "endpoint": "proaudio", "enabled": True},
+    {"name": "Planet World", "endpoint": "planetworld", "enabled": True},
     # Disabled servers (have issues per Claude's report)
-    {"name": "Homemation", "path": "mcp-feed-homemation", "enabled": False},
-    {"name": "Google Merchant", "path": "mcp-feed-google-merchant", "enabled": False},
+    {"name": "Homemation", "endpoint": "homemation", "enabled": False},
+    {"name": "Google Merchant", "endpoint": "google-merchant", "enabled": False},
 ]
 
 class MCPSyncOrchestrator:
@@ -40,56 +42,66 @@ class MCPSyncOrchestrator:
         self.results = []
     
     async def sync_supplier(self, server: Dict) -> Dict:
-        """Sync a single MCP server."""
+        """Sync a single MCP server via HTTP."""
         supplier_name = server["name"]
-        server_path = os.path.join(MCP_SERVERS_PATH, server["path"])
+        endpoint = server["endpoint"]
         
-        logger.info("sync_supplier_start", supplier=supplier_name, path=server_path)
+        logger.info("sync_supplier_start", supplier=supplier_name, endpoint=endpoint)
         
         start_time = datetime.now()
         
         try:
-            # Check if directory exists
-            if not os.path.exists(server_path):
-                raise FileNotFoundError(f"MCP server directory not found: {server_path}")
-            
-            # Run npm run sync in the server directory
-            process = await asyncio.create_subprocess_exec(
-                "npm", "run", "sync",
-                cwd=server_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
+            # Make HTTP POST request to MCP HTTP service
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(
+                    f"{MCP_SERVICE_URL}/sync/{endpoint}"
+                )
+                
+                duration = (datetime.now() - start_time).total_seconds()
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    logger.info("sync_supplier_success", 
+                               supplier=supplier_name, 
+                               duration=duration)
+                    
+                    return {
+                        "supplier": supplier_name,
+                        "status": "success",
+                        "duration": duration,
+                        "output": data.get("output", "")[:500],
+                        "error": None
+                    }
+                else:
+                    error_data = response.json() if response.headers.get("content-type") == "application/json" else {"error": response.text}
+                    
+                    logger.error("sync_supplier_failed", 
+                                supplier=supplier_name, 
+                                error=error_data.get("error", "Unknown error"))
+                    
+                    return {
+                        "supplier": supplier_name,
+                        "status": "failed",
+                        "duration": duration,
+                        "output": None,
+                        "error": str(error_data.get("error", "Unknown error"))[:500]
+                    }
+                    
+        except httpx.TimeoutException as e:
             duration = (datetime.now() - start_time).total_seconds()
+            logger.error("sync_supplier_timeout", 
+                        supplier=supplier_name, 
+                        error=str(e))
             
-            if process.returncode == 0:
-                logger.info("sync_supplier_success", 
-                           supplier=supplier_name, 
-                           duration=duration)
-                
-                return {
-                    "supplier": supplier_name,
-                    "status": "success",
-                    "duration": duration,
-                    "output": stdout.decode()[:500],  # First 500 chars
-                    "error": None
-                }
-            else:
-                logger.error("sync_supplier_failed", 
-                            supplier=supplier_name, 
-                            error=stderr.decode())
-                
-                return {
-                    "supplier": supplier_name,
-                    "status": "failed",
-                    "duration": duration,
-                    "output": None,
-                    "error": stderr.decode()[:500]
-                }
-                
+            return {
+                "supplier": supplier_name,
+                "status": "error",
+                "duration": duration,
+                "output": None,
+                "error": f"Timeout after {duration}s"
+            }
+            
         except Exception as e:
             duration = (datetime.now() - start_time).total_seconds()
             logger.error("sync_supplier_error", 
