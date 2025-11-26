@@ -1,0 +1,32 @@
+{
+  "name": "@audico/mcp-feed-solution-technologies",
+  "version": "1.0.0",
+  "description": "Solution Technologies MCP Server - Shopify JSON feed integration",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node dist/test.js",
+    "sync": "node dist/sync.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "solution-technologies",
+    "shopify",
+    "feed",
+    "audico"
+  ],
+  "author": "Audico",
+  "license": "MIT",
+  "dependencies": {
+    "@audico/shared": "file:../shared",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.1"
+  }
+}
