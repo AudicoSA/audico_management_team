@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import dotenv from 'dotenv';
+import { randomUUID } from 'crypto';
 
 dotenv.config();
 
@@ -12,6 +13,9 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Track active sync sessions
+const activeSyncs = new Map(); // sessionId -> sync status object
 
 // Middleware
 app.use(cors());
@@ -40,7 +44,7 @@ const MCP_SERVERS = {
  * Execute sync script for a specific MCP server
  * Directly runs node instead of npm to avoid shell dependency
  */
-async function runMCPSync(serverKey) {
+async function runMCPSync(serverKey, sessionId = null) {
     const server = MCP_SERVERS[serverKey];
     if (!server) {
         throw new Error(`Unknown server: ${serverKey}`);
@@ -67,6 +71,12 @@ async function runMCPSync(serverKey) {
             const output = data.toString();
             stdout += output;
             console.log(`[${server.name}] ${output.trim()}`);
+
+            // Update progress if session exists
+            if (sessionId && activeSyncs.has(sessionId)) {
+                const status = activeSyncs.get(sessionId);
+                status.lastOutput = output.trim();
+            }
         });
 
         child.stderr.on('data', (data) => {
@@ -112,6 +122,55 @@ async function runMCPSync(serverKey) {
     });
 }
 
+/**
+ * Start sync asynchronously and return session ID immediately
+ */
+function startSyncAsync(serverKey) {
+    const sessionId = randomUUID();
+    const server = MCP_SERVERS[serverKey];
+
+    if (!server) {
+        throw new Error(`Unknown server: ${serverKey}`);
+    }
+
+    // Initialize sync status
+    activeSyncs.set(sessionId, {
+        sessionId,
+        supplier: serverKey,
+        supplierName: server.name,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        duration: null,
+        result: null,
+        error: null,
+        lastOutput: null
+    });
+
+    // Run sync in background
+    runMCPSync(serverKey, sessionId)
+        .then(result => {
+            const status = activeSyncs.get(sessionId);
+            if (status) {
+                status.status = 'completed';
+                status.completedAt = new Date().toISOString();
+                status.duration = result.duration;
+                status.result = result;
+            }
+        })
+        .catch(error => {
+            const status = activeSyncs.get(sessionId);
+            if (status) {
+                status.status = 'failed';
+                status.completedAt = new Date().toISOString();
+                status.duration = error.duration || 0;
+                status.error = error.error || error.message;
+            }
+        });
+
+    return sessionId;
+}
+
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({
@@ -133,7 +192,7 @@ app.get('/suppliers', (req, res) => {
     });
 });
 
-// Sync endpoint for individual supplier
+// Sync endpoint for individual supplier (async)
 app.post('/sync/:supplier', async (req, res) => {
     const { supplier } = req.params;
 
@@ -146,44 +205,99 @@ app.post('/sync/:supplier', async (req, res) => {
     }
 
     try {
-        const result = await runMCPSync(supplier);
-        res.json(result);
+        const sessionId = startSyncAsync(supplier);
+        res.json({
+            success: true,
+            sessionId,
+            supplier,
+            message: 'Sync started in background',
+            statusEndpoint: `/sync-status/${sessionId}`
+        });
     } catch (error) {
-        res.status(500).json(error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
-// Sync all suppliers sequentially
-app.post('/sync-all', async (req, res) => {
-    const results = [];
-    const startTime = Date.now();
+// Get status of a specific sync session
+app.get('/sync-status/:sessionId', (req, res) => {
+    const { sessionId } = req.params;
+    const status = activeSyncs.get(sessionId);
 
-    console.log('🚀 Starting sync for all suppliers...');
+    if (!status) {
+        return res.status(404).json({
+            success: false,
+            error: 'Session not found'
+        });
+    }
+
+    res.json(status);
+});
+
+// Sync all suppliers (async)
+app.post('/sync-all', async (req, res) => {
+    console.log('🚀 Starting async sync for all suppliers...');
+
+    const sessions = {};
 
     for (const [key, config] of Object.entries(MCP_SERVERS)) {
         try {
-            console.log(`\n📦 Syncing ${config.name}...`);
-            const result = await runMCPSync(key);
-            results.push(result);
+            const sessionId = startSyncAsync(key);
+            sessions[key] = {
+                sessionId,
+                supplier: key,
+                name: config.name
+            };
         } catch (error) {
-            results.push(error);
+            console.error(`Failed to start sync for ${config.name}:`, error);
+            sessions[key] = {
+                error: error.message,
+                supplier: key,
+                name: config.name
+            };
         }
     }
 
-    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
+    res.json({
+        success: true,
+        message: 'All syncs started in background',
+        sessions,
+        statusEndpoint: '/sync-all-status'
+    });
+});
 
-    console.log(`\n✅ Sync all completed in ${totalDuration}s`);
-    console.log(`   Success: ${successful}, Failed: ${failed}`);
+// Get status of all active syncs
+app.get('/sync-all-status', (req, res) => {
+    const allStatuses = {};
+
+    for (const [key, config] of Object.entries(MCP_SERVERS)) {
+        // Find the most recent session for this supplier
+        let latestSession = null;
+        let latestTime = 0;
+
+        for (const [sessionId, status] of activeSyncs.entries()) {
+            if (status.supplier === key) {
+                const time = new Date(status.startedAt).getTime();
+                if (time > latestTime) {
+                    latestTime = time;
+                    latestSession = status;
+                }
+            }
+        }
+
+        allStatuses[key] = latestSession || {
+            supplier: key,
+            supplierName: config.name,
+            status: 'idle',
+            message: 'No recent sync'
+        };
+    }
 
     res.json({
-        success: failed === 0,
-        total: results.length,
-        successful,
-        failed,
-        duration: parseFloat(totalDuration),
-        results
+        suppliers: allStatuses,
+        timestamp: new Date().toISOString()
     });
 });
 

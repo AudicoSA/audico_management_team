@@ -1,85 +1,106 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { useState, useEffect, useRef } from 'react'
 
-interface SyncSession {
-    id: string
-    started_at: string
-    completed_at: string | null
-    status: 'running' | 'completed' | 'partial' | 'failed'
-    total_suppliers: number
-    completed_suppliers: number
-    failed_suppliers: number
-    triggered_by: string
+interface SupplierStatus {
+    sessionId?: string
+    supplier: string
+    supplierName: string
+    status: 'idle' | 'running' | 'completed' | 'failed'
+    startedAt?: string
+    completedAt?: string
+    duration?: number
+    result?: {
+        success: boolean
+        duration: number
+        output?: string
+        error?: string
+    }
+    error?: string
+    lastOutput?: string
+    message?: string
 }
 
-interface SyncLog {
-    id: string
-    supplier_name: string
-    status: 'success' | 'failed' | 'error'
-    duration_seconds: number
-    error: string | null
-    created_at: string
+interface SyncAllStatusResponse {
+    suppliers: Record<string, SupplierStatus>
+    timestamp: string
 }
 
 export default function MCPSyncStatusPage() {
-    const [sessions, setSessions] = useState<SyncSession[]>([])
-    const [selectedSession, setSelectedSession] = useState<string | null>(null)
-    const [logs, setLogs] = useState<SyncLog[]>([])
-    const [loading, setLoading] = useState(true)
+    const [suppliers, setSuppliers] = useState<Record<string, SupplierStatus>>({})
     const [syncing, setSyncing] = useState(false)
+    const [polling, setPolling] = useState(false)
+    const pollingInterval = useRef<NodeJS.Timeout | null>(null)
+
+    const MCP_SERVICE_URL = process.env.NEXT_PUBLIC_MCP_SERVICE_URL || 'https://mcp-http-service-production-b30b.up.railway.app'
 
     useEffect(() => {
-        fetchSessions()
+        // Initial load
+        fetchStatus()
+
+        // Cleanup on unmount
+        return () => {
+            if (pollingInterval.current) {
+                clearInterval(pollingInterval.current)
+            }
+        }
     }, [])
 
-    useEffect(() => {
-        if (selectedSession) {
-            fetchLogs(selectedSession)
+    const fetchStatus = async () => {
+        try {
+            const response = await fetch(`${MCP_SERVICE_URL}/sync-all-status`)
+            const data: SyncAllStatusResponse = await response.json()
+            setSuppliers(data.suppliers)
+
+            // Check if any syncs are still running
+            const hasRunning = Object.values(data.suppliers).some(s => s.status === 'running')
+
+            if (hasRunning && !polling) {
+                startPolling()
+            } else if (!hasRunning && polling) {
+                stopPolling()
+            }
+        } catch (error) {
+            console.error('Failed to fetch status:', error)
         }
-    }, [selectedSession])
-
-    const fetchSessions = async () => {
-        setLoading(true)
-
-        const { data } = await supabase
-            .from('mcp_sync_sessions')
-            .select('*')
-            .order('started_at', { ascending: false })
-            .limit(20)
-
-        setSessions(data || [])
-        setLoading(false)
     }
 
-    const fetchLogs = async (sessionId: string) => {
-        const { data } = await supabase
-            .from('mcp_sync_log')
-            .select('*')
-            .eq('session_id', sessionId)
-            .order('created_at')
+    const startPolling = () => {
+        if (pollingInterval.current) return
 
-        setLogs(data || [])
+        setPolling(true)
+        pollingInterval.current = setInterval(() => {
+            fetchStatus()
+        }, 2000) // Poll every 2 seconds
+    }
+
+    const stopPolling = () => {
+        if (pollingInterval.current) {
+            clearInterval(pollingInterval.current)
+            pollingInterval.current = null
+        }
+        setPolling(false)
     }
 
     const triggerSync = async () => {
         setSyncing(true)
 
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/mcp/sync-all`, {
+            const response = await fetch(`${MCP_SERVICE_URL}/sync-all`, {
                 method: 'POST'
             })
 
             const result = await response.json()
 
             if (result.success) {
-                alert(`Sync completed: ${result.completed}/${result.total} suppliers successful`)
-                fetchSessions()
+                // Start polling for status updates
+                startPolling()
+                fetchStatus()
             } else {
-                alert('Sync failed')
+                alert('Failed to start sync')
             }
         } catch (error) {
+            console.error('Failed to trigger sync:', error)
             alert('Failed to trigger sync')
         } finally {
             setSyncing(false)
@@ -89,19 +110,43 @@ export default function MCPSyncStatusPage() {
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'completed': return 'text-green-600 bg-green-50'
-            case 'running': return 'text-blue-600 bg-blue-50'
-            case 'partial': return 'text-yellow-600 bg-yellow-50'
+            case 'running': return 'text-blue-600 bg-blue-50 animate-pulse'
             case 'failed': return 'text-red-600 bg-red-50'
+            case 'idle': return 'text-gray-600 bg-gray-50'
             default: return 'text-gray-600 bg-gray-50'
         }
     }
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-gray-500">Loading sync status...</div>
-            </div>
-        )
+    const getStatusIcon = (status: string) => {
+        switch (status) {
+            case 'completed': return '✅'
+            case 'running': return '⏳'
+            case 'failed': return '❌'
+            case 'idle': return '⏸️'
+            default: return '❓'
+        }
+    }
+
+    const formatDuration = (seconds?: number) => {
+        if (!seconds) return '-'
+        if (seconds < 60) return `${seconds.toFixed(1)}s`
+        const mins = Math.floor(seconds / 60)
+        const secs = Math.floor(seconds % 60)
+        return `${mins}m ${secs}s`
+    }
+
+    const supplierList = Object.entries(suppliers).sort((a, b) => {
+        // Sort by status: running first, then completed, then failed, then idle
+        const statusOrder = { running: 0, completed: 1, failed: 2, idle: 3 }
+        return (statusOrder[a[1].status as keyof typeof statusOrder] || 4) -
+            (statusOrder[b[1].status as keyof typeof statusOrder] || 4)
+    })
+
+    const stats = {
+        total: supplierList.length,
+        running: supplierList.filter(([_, s]) => s.status === 'running').length,
+        completed: supplierList.filter(([_, s]) => s.status === 'completed').length,
+        failed: supplierList.filter(([_, s]) => s.status === 'failed').length,
     }
 
     return (
@@ -115,89 +160,85 @@ export default function MCPSyncStatusPage() {
 
                     <button
                         onClick={triggerSync}
-                        disabled={syncing}
-                        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                        disabled={syncing || stats.running > 0}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                     >
-                        {syncing ? 'Syncing...' : 'Trigger Manual Sync'}
+                        {syncing ? 'Starting...' : stats.running > 0 ? `Syncing (${stats.running}/${stats.total})` : 'Trigger Manual Sync'}
                     </button>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Sync Sessions List */}
-                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                        <h2 className="text-xl font-semibold text-gray-900 mb-4">Recent Syncs</h2>
+                {/* Stats Overview */}
+                <div className="grid grid-cols-4 gap-4 mb-6">
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                        <div className="text-sm text-gray-600">Total Suppliers</div>
+                        <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
+                    </div>
+                    <div className="bg-blue-50 rounded-lg shadow-sm border border-blue-200 p-4">
+                        <div className="text-sm text-blue-600">Running</div>
+                        <div className="text-2xl font-bold text-blue-900">{stats.running}</div>
+                    </div>
+                    <div className="bg-green-50 rounded-lg shadow-sm border border-green-200 p-4">
+                        <div className="text-sm text-green-600">Completed</div>
+                        <div className="text-2xl font-bold text-green-900">{stats.completed}</div>
+                    </div>
+                    <div className="bg-red-50 rounded-lg shadow-sm border border-red-200 p-4">
+                        <div className="text-sm text-red-600">Failed</div>
+                        <div className="text-2xl font-bold text-red-900">{stats.failed}</div>
+                    </div>
+                </div>
 
-                        <div className="space-y-3">
-                            {sessions.map(session => (
-                                <div
-                                    key={session.id}
-                                    onClick={() => setSelectedSession(session.id)}
-                                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${selectedSession === session.id
-                                        ? 'border-blue-500 bg-blue-50'
-                                        : 'border-gray-200 hover:border-gray-300'
-                                        }`}
-                                >
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(session.status)}`}>
-                                            {session.status.toUpperCase()}
-                                        </span>
-                                        <span className="text-sm text-gray-500">
-                                            {new Date(session.started_at).toLocaleString()}
-                                        </span>
-                                    </div>
-
-                                    <div className="flex items-center justify-between text-sm">
-                                        <span className="text-gray-600">
-                                            {session.completed_suppliers}/{session.total_suppliers} completed
-                                        </span>
-                                        {session.failed_suppliers > 0 && (
-                                            <span className="text-red-600">
-                                                {session.failed_suppliers} failed
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                {/* Supplier List */}
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div className="p-6 border-b border-gray-200">
+                        <h2 className="text-xl font-semibold text-gray-900">Supplier Sync Status</h2>
+                        {polling && (
+                            <p className="text-sm text-blue-600 mt-1">🔄 Auto-refreshing every 2 seconds...</p>
+                        )}
                     </div>
 
-                    {/* Sync Logs Detail */}
-                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                        <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                            {selectedSession ? 'Sync Details' : 'Select a sync session'}
-                        </h2>
-
-                        {selectedSession && logs.length > 0 ? (
-                            <div className="space-y-3">
-                                {logs.map(log => (
-                                    <div key={log.id} className="p-4 rounded-lg border border-gray-200">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="font-medium text-gray-900">{log.supplier_name}</span>
-                                            <span className={`px-2 py-1 rounded text-xs font-medium ${log.status === 'success'
-                                                ? 'bg-green-100 text-green-700'
-                                                : 'bg-red-100 text-red-700'
-                                                }`}>
-                                                {log.status}
-                                            </span>
-                                        </div>
-
-                                        <div className="text-sm text-gray-600">
-                                            Duration: {log.duration_seconds.toFixed(1)}s
-                                        </div>
-
-                                        {log.error && (
-                                            <div className="mt-2 p-2 bg-red-50 rounded text-xs text-red-700">
-                                                {log.error}
+                    <div className="divide-y divide-gray-200">
+                        {supplierList.map(([key, supplier]) => (
+                            <div key={key} className="p-6 hover:bg-gray-50 transition-colors">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-4 flex-1">
+                                        <span className="text-2xl">{getStatusIcon(supplier.status)}</span>
+                                        <div className="flex-1">
+                                            <h3 className="font-semibold text-gray-900">{supplier.supplierName}</h3>
+                                            <div className="flex items-center space-x-4 mt-1">
+                                                <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(supplier.status)}`}>
+                                                    {supplier.status.toUpperCase()}
+                                                </span>
+                                                {supplier.duration !== undefined && (
+                                                    <span className="text-sm text-gray-600">
+                                                        Duration: {formatDuration(supplier.duration)}
+                                                    </span>
+                                                )}
+                                                {supplier.startedAt && (
+                                                    <span className="text-sm text-gray-500">
+                                                        Started: {new Date(supplier.startedAt).toLocaleTimeString()}
+                                                    </span>
+                                                )}
                                             </div>
-                                        )}
+                                            {supplier.lastOutput && supplier.status === 'running' && (
+                                                <div className="mt-2 text-xs text-gray-600 font-mono bg-gray-100 p-2 rounded">
+                                                    {supplier.lastOutput}
+                                                </div>
+                                            )}
+                                            {supplier.error && (
+                                                <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+                                                    {supplier.error}
+                                                </div>
+                                            )}
+                                            {supplier.result?.output && supplier.status === 'completed' && (
+                                                <div className="mt-2 text-xs text-green-600">
+                                                    ✓ Sync completed successfully
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                ))}
+                                </div>
                             </div>
-                        ) : (
-                            <div className="text-center py-12 text-gray-500">
-                                {selectedSession ? 'No logs found' : 'Select a session to view details'}
-                            </div>
-                        )}
+                        ))}
                     </div>
                 </div>
             </div>
