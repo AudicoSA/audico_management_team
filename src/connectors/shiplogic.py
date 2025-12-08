@@ -62,6 +62,7 @@ class ShiplogicConnector:
         collection_address: Dict[str, Any],
         delivery_address: Dict[str, Any],
         parcels: list[Dict[str, Any]],
+        declared_value: float = 0.0,
     ) -> list[Dict[str, Any]]:
         """Get shipping rates for a shipment.
         
@@ -69,6 +70,7 @@ class ShiplogicConnector:
             collection_address: Collection address details
             delivery_address: Delivery address details
             parcels: List of parcel details
+            declared_value: Declared value of goods
             
         Returns:
             List of available rates/services
@@ -79,6 +81,7 @@ class ShiplogicConnector:
                 "collection_address": collection_address,
                 "delivery_address": delivery_address,
                 "parcels": parcels,
+                "declared_value": declared_value,
             }
             
             response = await self.session.post(url, json=payload)
@@ -97,9 +100,14 @@ class ShiplogicConnector:
         collection_address: Dict[str, Any],
         delivery_address: Dict[str, Any],
         parcels: list[Dict[str, Any]],
+        collection_contact: Dict[str, Any],
+        delivery_contact: Dict[str, Any],
         service_level_code: str = "ECO", # Default to Economy
         special_instructions: str = "",
+        declared_value: float = 0.0,
         dry_run: bool = True,
+        custom_tracking_reference: str = None,
+        customer_reference: str = None,
     ) -> Optional[Dict[str, Any]]:
         """Create a shipment.
         
@@ -108,13 +116,20 @@ class ShiplogicConnector:
             collection_address: Collection address details
             delivery_address: Delivery address details
             parcels: List of parcel details
+            collection_contact: Collection contact details
+            delivery_contact: Delivery contact details
             service_level_code: Service level code (e.g. 'ECO', 'ONX')
             special_instructions: Special instructions for courier
             dry_run: If True, returns mock data without calling API
+            custom_tracking_reference: Optional custom reference to override default TCG{order_id}
+            customer_reference: Optional customer reference (e.g. Supplier Invoice No)
             
         Returns:
             Shipment creation response with tracking details
         """
+        tracking_ref = custom_tracking_reference or f"TCG{order_id}"
+        cust_ref = customer_reference or order_id
+
         if dry_run:
             logger.info(
                 "create_shipment_dry_run",
@@ -123,13 +138,14 @@ class ShiplogicConnector:
             )
             return {
                 "shipment_id": f"DRY-RUN-{order_id}",
-                "tracking_number": f"TRK{order_id}",
+                "tracking_number": tracking_ref,
                 "tracking_url": f"https://track.shiplogic.com/DRY-RUN-{order_id}",
                 "courier": "Dry Run Courier",
                 "service_level": service_level_code,
                 "estimated_delivery": "3-5 business days",
                 "cost": 150.00,
                 "status": "pending",
+                "customer_reference": cust_ref
             }
 
         try:
@@ -138,9 +154,14 @@ class ShiplogicConnector:
                 "collection_address": collection_address,
                 "delivery_address": delivery_address,
                 "parcels": parcels,
+                "collection_contact": collection_contact,
+                "delivery_contact": delivery_contact,
                 "service_level_code": service_level_code,
-                "references": [order_id],
-                "special_instructions": special_instructions,
+                "custom_tracking_reference": tracking_ref,
+                "customer_reference": cust_ref,
+                "special_instructions_collection": "",
+                "special_instructions_delivery": special_instructions,
+                "declared_value": declared_value,
             }
 
             response = await self.session.post(url, json=payload)
@@ -148,19 +169,35 @@ class ShiplogicConnector:
             
             data = response.json()
             logger.info("shipment_created", order_id=order_id, shipment_id=data.get("id"))
+            # Safe parsing helper
+            def get_name(obj):
+                if isinstance(obj, dict):
+                    return obj.get("name")
+                return obj
+
             return {
                 "shipment_id": data.get("id"),
-                "tracking_number": data.get("tracking_reference"),
+                "tracking_number": data.get("tracking_reference") or data.get("custom_tracking_reference") or data.get("short_tracking_reference"),
                 "tracking_url": data.get("tracking_url"),
-                "courier": data.get("courier", {}).get("name"),
-                "service_level": data.get("service_level", {}).get("name"),
+                "courier": get_name(data.get("courier")),
+                "service_level": get_name(data.get("service_level")),
                 "cost": data.get("cost", 0.0),
-                "status": data.get("status", {}).get("name", "pending").lower(),
+                "status": str(get_name(data.get("status")) or "pending").lower(),
             }
 
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "create_shipment_http_error", 
+                order_id=order_id, 
+                status=e.response.status_code, 
+                response=e.response.text
+            )
+            # Raise a more informative error
+            raise Exception(f"Shiplogic API Error ({e.response.status_code}): {e.response.text}") from e
+            
         except Exception as e:
             logger.error("create_shipment_failed", order_id=order_id, error=str(e))
-            return None
+            raise e
 
     async def close(self) -> None:
         """Close HTTP session."""

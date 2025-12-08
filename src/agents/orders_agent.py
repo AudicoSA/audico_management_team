@@ -62,18 +62,35 @@ class OrdersLogisticsAgent:
                 return {"status": "error", "error": f"Order {order_id} not found in OpenCart"}
 
             # 2. Prepare addresses
-            # Map OpenCart address to Shiplogic format
-            # Note: This is a simplified mapping. Real implementation might need more robust parsing.
-            shipping_address = order.get("shipping_address", {})
-            delivery_address = {
-                "company": order.get("company") or "",
-                "street_address": f"{shipping_address.get('address_1', '')} {shipping_address.get('address_2', '')}".strip(),
-                "local_area": shipping_address.get("city", ""),
-                "city": shipping_address.get("city", ""),
-                "code": shipping_address.get("postcode", ""),
-                "zone": shipping_address.get("zone", ""),
-                "country_code": "ZA", # Assuming South Africa for now
-            }
+            # Check if payload provided an override (User Edit in Dashboard)
+            custom_delivery = data.get("delivery_address")
+            if custom_delivery:
+                 delivery_address = custom_delivery
+                 # Ensure defaults
+                 if not delivery_address.get("country_code"):
+                     delivery_address["country_code"] = "ZA"
+            else:
+                # Map OpenCart address to Shiplogic format (Handle Flat Structure)
+                
+                # Construct Street Address
+                addr1 = order.get("shipping_address_1") or order.get("payment_address_1") or ""
+                addr2 = order.get("shipping_address_2") or order.get("payment_address_2") or ""
+                street = f"{addr1} {addr2}".strip()
+                
+                city = order.get("shipping_city") or order.get("payment_city") or ""
+                postcode = order.get("shipping_postcode") or order.get("payment_postcode") or ""
+                zone = order.get("shipping_zone") or order.get("payment_zone") or ""
+                company = order.get("shipping_company") or order.get("payment_company") or ""
+
+                delivery_address = {
+                    "company": company,
+                    "street_address": street,
+                    "local_area": city, # Often city is the best proxy, or use suburb if available
+                    "city": city,
+                    "code": postcode,
+                    "zone": zone,
+                    "country_code": "ZA", # Default to ZA
+                }
             
             # Collection address (Audico HQ - hardcoded for now or fetch from config)
             # Allow override from input data (for Drop Shipping)
@@ -95,27 +112,140 @@ class OrdersLogisticsAgent:
             # Simplified: 1 parcel, 2kg
             parcels = [{
                 "parcel_description": "Standard Box",
-                "weight": 2.0,
-                "height": 10,
-                "length": 20,
-                "width": 15,
+                "submitted_weight_kg": 2.0,
+                "submitted_height_cm": 10,
+                "submitted_length_cm": 20,
+                "submitted_width_cm": 15,
             }]
 
-            # 4. Create Shipment
-            shipment = await self.shiplogic.create_shipment(
-                order_id=order_id,
-                collection_address=collection_address,
-                delivery_address=delivery_address,
-                parcels=parcels,
-                service_level_code="ECO", # Default
-                dry_run=dry_run
-            )
+            # 4. Prepare contacts
+            delivery_contact = {
+                "name": f"{order.get('firstname', '')} {order.get('lastname', '')}".strip(),
+                "mobile_number": order.get("telephone", ""),
+                "email": order.get("email", "")
+            }
+            
+            # Default Collection Contact (Audico)
+            collection_contact = {
+                "name": "Dispatch Team",
+                "mobile_number": "", 
+                "email": "dispatch@audico.co.za"
+            }
+
+            # 5. Create Shipment
+            # Retry logic for duplicate references (e.g. TCG123 -> TCG123-1)
+            max_retries = 3
+            current_try = 0
+            shipment = None
+            shipment = None
+            last_error = None
+            
+            declared_value = float(data.get("declared_value", 0.0))
+            
+            while current_try <= max_retries:
+                try:
+                    # Construct reference suffix if retrying
+                    custom_ref = None
+                    if current_try > 0:
+                        custom_ref = f"TCG{order_id}-{current_try}"
+                        logger.info("retrying_shipment_creation", attempt=current_try, new_ref=custom_ref)
+
+                    # Extract supplier invoice / customer reference
+                    customer_ref = data.get("supplier_invoice")
+                    logger.info("creating_shipment_params", order_id=order_id, supplier_invoice=customer_ref, custom_ref=custom_ref)
+
+                    # Determine Service Level (Dynamic Fallback)
+                    # Use strictly what is available from Shiplogic
+                    service_level = None
+                    try:
+                        rates = await self.shiplogic.get_rates(collection_address, delivery_address, parcels, declared_value)
+                        # Helper to safely extract code
+                        def get_code(r):
+                            sl = r.get('service_level')
+                            if isinstance(sl, dict):
+                                return sl.get('code')
+                            return r.get('service_level_code') # Fallback if flattened
+
+                        logger.info("fetched_rates", order_id=order_id, count=len(rates), rates=[get_code(r) for r in rates])
+                        
+                        if not rates:
+                            raise Exception("No shipping rates returned by Shiplogic for this route.")
+                            
+                        available_services = {get_code(r): r for r in rates}
+                        
+                        # Preference Logic
+                        if "LOX" in available_services:
+                            service_level = "LOX"
+                        elif "ECO" in available_services:
+                            service_level = "ECO"
+                        else:
+                            # Fallback to the first available service (any)
+                            # We sort by cost just to be nice (safest default)
+                            # Note: key might be 'total', 'cost', 'total_charge'
+                            def get_cost(r):
+                                return float(r.get('total') or r.get('cost') or r.get('total_charge') or 999999.0)
+                                
+                            cheapest_rate = sorted(rates, key=get_cost)[0]
+                            service_level = get_code(cheapest_rate)
+                            
+                        logger.info("service_level_selected", order_id=order_id, selected=service_level)
+                                               
+                    except Exception as e:
+                        logger.warning("failed_to_fetch_rates_dynamic_logic", error=str(e))
+                        # If we can't get rates, we can't reliably guess. 
+                        # But for backward compatibility/desperation, we *could* try ECO, but that's what caused the 400.
+                        # Better to fail or throw clearly.
+                        if "No shipping rates" in str(e):
+                            raise e
+                        # If it was an API error, maybe default ECO is worth a shot (risky)
+                        # Let's fail fast.
+                        raise Exception(f"Could not determine valid service level: {str(e)}")
+
+                    shipment = await self.shiplogic.create_shipment(
+                        order_id=order_id,
+                        collection_address=collection_address,
+                        delivery_address=delivery_address,
+                        parcels=parcels,
+                        collection_contact=collection_contact,
+                        delivery_contact=delivery_contact,
+                        service_level_code=service_level,
+                        dry_run=dry_run,
+                        custom_tracking_reference=custom_ref,
+                        customer_reference=customer_ref,
+                        declared_value=declared_value
+                    )
+
+                    if shipment:
+                        break # Success
+                        
+                except Exception as e:
+                    last_error = e
+                    logger.warning("create_shipment_attempt_failed", attempt=current_try, error=str(e))
+                
+                current_try += 1
 
             if not shipment:
-                return {"status": "error", "error": "Failed to create shipment via Shiplogic"}
+                 # If we exhausted retries or failed
+                error_msg = str(last_error) if last_error else "Failed to create shipment via Shiplogic"
+                return {"status": "error", "error": error_msg}
 
-            # 5. Update Supabase
+            # 6. Update Supabase
             if not dry_run:
+                # Normalize status for Supabase enum/check constraint
+                raw_status = shipment.get("status")
+                # Map Shiplogic statuses to simple stats allowed by DB
+                valid_db_statuses = ["pending", "booked", "shipped", "delivered", "cancelled"]
+                
+                db_status = "pending"
+                if raw_status in ["collection-assigned", "collection-unassigned", "submitted"]:
+                    db_status = "booked"
+                elif raw_status in ["collected", "in-transit", "at-hub", "out-for-delivery"]:
+                     db_status = "shipped"
+                elif raw_status == "delivered":
+                    db_status = "delivered"
+                elif raw_status == "cancelled":
+                    db_status = "cancelled"
+                
                 # Create shipment record
                 await self.supabase.create_shipment(
                     order_no=order_id,
@@ -123,13 +253,14 @@ class OrdersLogisticsAgent:
                     tracking_url=shipment.get("tracking_url"),
                     courier=shipment.get("courier"),
                     shipping_cost=shipment.get("cost"),
-                    status=shipment.get("status"),
+                    status=db_status,
                     payload=shipment
                 )
                 
                 # Update tracker
                 await self.supabase.upsert_order_tracker(
                     order_no=order_id,
+                    supplier_status="Shipped", 
                     shipping=shipment.get("cost"),
                     updates=f"Shipment created: {shipment.get('tracking_number')}"
                 )
@@ -196,7 +327,7 @@ class OrdersLogisticsAgent:
                         order_name=f"Order #{order_id}", # Placeholder name
                         source="opencart",  # Changed from opencart_sync
                         cost=total, # Revenue
-                        notes=f"Customer: {order.get('firstname')} {order.get('lastname')} | Email: {order.get('email')}",
+                        notes=f"Customer: {order.get('firstname')} {order.get('lastname')} | Email: {order.get('email')} | Address: {order.get('shipping_address_1', '')}, {order.get('shipping_city', '')}, {order.get('shipping_postcode', '')}",
                         last_modified_by="system_sync"
                     )
                     synced_count += 1
