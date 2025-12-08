@@ -4,16 +4,19 @@ import { supabase, type Supplier } from '@/lib/supabase'
 interface BookShipmentModalProps {
     isOpen: boolean
     onClose: () => void
-    onConfirm: (address: any) => void
+    onConfirm: (address: any, dryRun: boolean, supplierInvoice: string) => void
     orderId: string
     loading: boolean
+    initialSupplierInvoice?: string
 }
 
-export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId, loading }: BookShipmentModalProps) {
+export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId, loading, initialSupplierInvoice }: BookShipmentModalProps) {
     const [suppliers, setSuppliers] = useState<Supplier[]>([])
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>('custom')
     const [saveAsNew, setSaveAsNew] = useState(false)
     const [newSupplierName, setNewSupplierName] = useState('')
+    const [dryRun, setDryRun] = useState(true)
+    const [supplierInvoice, setSupplierInvoice] = useState('')
 
     const [address, setAddress] = useState({
         company: 'Audico Online',
@@ -27,8 +30,9 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
     useEffect(() => {
         if (isOpen) {
             fetchSuppliers()
+            setSupplierInvoice(initialSupplierInvoice || '')
         }
-    }, [isOpen])
+    }, [isOpen, initialSupplierInvoice])
 
     const fetchSuppliers = async () => {
         console.log('🔍 Fetching suppliers...')
@@ -100,7 +104,7 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
             }
         }
 
-        onConfirm(address)
+        onConfirm(address, dryRun, supplierInvoice)
     }
 
     if (!isOpen) return null
@@ -112,6 +116,20 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
 
                 <form onSubmit={handleSubmit}>
                     <div className="space-y-4">
+
+                        {/* Supplier Invoice Input */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Supplier Invoice (Customer Reference)</label>
+                            <input
+                                type="text"
+                                value={supplierInvoice}
+                                onChange={e => setSupplierInvoice(e.target.value)}
+                                placeholder="e.g. ORD123456"
+                                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+                                required
+                            />
+                        </div>
+
                         <div className="bg-gray-50 p-3 rounded-md border border-gray-200">
                             <label className="block text-sm font-medium text-gray-700 mb-2">Load from Address Book</label>
                             <select
@@ -224,6 +242,25 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                                     />
                                 </div>
                             )}
+                        </div>
+
+                        {/* Test Mode Toggle */}
+                        <div className="pt-4 border-t border-gray-200">
+                            <div className="flex items-center">
+                                <input
+                                    id="dry-run"
+                                    type="checkbox"
+                                    checked={dryRun}
+                                    onChange={(e) => setDryRun(e.target.checked)}
+                                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                />
+                                <label htmlFor="dry-run" className="ml-2 block text-sm text-gray-900 font-medium">
+                                    Test Mode (Dry Run)
+                                </label>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1 ml-6">
+                                If checked, no actual shipment will be created with the courier.
+                            </p>
                         </div>
                     </div>
 

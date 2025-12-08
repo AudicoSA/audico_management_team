@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Optional
+from fastapi import HTTPException
 from src.connectors.shiplogic import get_shiplogic_connector
 from src.connectors.opencart import get_opencart_connector
 from src.connectors.supabase import get_supabase_connector
@@ -152,6 +153,9 @@ class OrdersLogisticsAgent:
 
                     # Extract supplier invoice / customer reference
                     customer_ref = data.get("supplier_invoice")
+                    if not customer_ref:
+                         raise HTTPException(status_code=400, detail="Supplier Invoice Number is required for shipping.")
+                    
                     logger.info("creating_shipment_params", order_id=order_id, supplier_invoice=customer_ref, custom_ref=custom_ref)
 
                     # Determine Service Level (Dynamic Fallback)
