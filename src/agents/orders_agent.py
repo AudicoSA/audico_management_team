@@ -154,7 +154,8 @@ class OrdersLogisticsAgent:
                     # Extract supplier invoice / customer reference
                     customer_ref = data.get("supplier_invoice")
                     if not customer_ref:
-                         raise HTTPException(status_code=400, detail="Supplier Invoice Number is required for shipping.")
+                         received_keys = ", ".join(data.keys())
+                         raise HTTPException(status_code=400, detail=f"Supplier Invoice Number is required for shipping. Debug: keys=[{received_keys}], val={data.get('supplier_invoice')!r}")
                     
                     logger.info("creating_shipment_params", order_id=order_id, supplier_invoice=customer_ref, custom_ref=custom_ref)
 
