@@ -75,7 +75,6 @@ class ShiplogicConnector:
         Returns:
             List of available rates/services
         """
-        try:
             url = f"{self.base_url}/rates"
             payload = {
                 "collection_address": collection_address,
@@ -89,10 +88,6 @@ class ShiplogicConnector:
             
             data = response.json()
             return data.get("rates", [])
-            
-        except Exception as e:
-            logger.error("get_rates_failed", error=str(e))
-            return []
 
     async def create_shipment(
         self,
