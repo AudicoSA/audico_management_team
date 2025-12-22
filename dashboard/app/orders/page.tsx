@@ -127,7 +127,7 @@ export default function OrdersPage() {
     setIsModalOpen(true)
   }
 
-  const handleConfirmBooking = async (collectionAddress: any) => {
+  const handleConfirmBooking = async (collectionAddress: any, dryRun: boolean, supplierInvoice: string) => {
     if (!selectedOrderForBooking) return
 
     setBookingLoading(true)
@@ -138,8 +138,9 @@ export default function OrdersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: selectedOrderForBooking,
-          dry_run: true,
-          collection_address: collectionAddress
+          dry_run: dryRun,
+          collection_address: collectionAddress,
+          supplier_invoice: supplierInvoice
         })
       })
 
@@ -147,6 +148,7 @@ export default function OrdersPage() {
 
       if (!response.ok) throw new Error(result.detail || 'Failed to create shipment')
 
+      console.log('Shipment created result:', result)
       alert(`Shipment created! Tracking: ${result.shipment.tracking_number}`)
       setIsModalOpen(false)
       fetchOrders() // Refresh
@@ -323,13 +325,23 @@ export default function OrdersPage() {
                         <EditableCell order={order} field="updates" value={order.updates} />
                       </td>
                       <td className="px-3 py-1 text-center border-r border-gray-200">
-                        <button
-                          onClick={() => openBookingModal(order.order_no)}
-                          className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs"
-                          title="Book Shipment (Dry Run)"
-                        >
-                          Ship
-                        </button>
+                        {order.supplier_status !== 'Shipped' && (
+                          <button
+                            onClick={() => openBookingModal(order.order_no)}
+                            className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs"
+                            title="Book Shipment (Dry Run)"
+                          >
+                            Ship
+                          </button>
+                        )}
+                        {order.supplier_status === 'Shipped' && (
+                          <button
+                            disabled
+                            className="px-2 py-0.5 bg-gray-100 text-gray-400 rounded cursor-not-allowed text-xs font-medium"
+                          >
+                            Shipped
+                          </button>
+                        )}
                       </td>
                       <OwnerCheckbox order={order} field="owner_wade" label="Wade" color="bg-blue-200" />
                       <OwnerCheckbox order={order} field="owner_lucky" label="Lucky" color="bg-green-200" />
@@ -346,7 +358,8 @@ export default function OrdersPage() {
             <p>Showing {orders.filter(o => showCompleted || !o.flag_done).length} of {orders.length} orders • Click any cell to edit • Click checkboxes to toggle</p>
           </div>
         </div>
-      )}
+      )
+      }
 
       <BookShipmentModal
         isOpen={isModalOpen}
@@ -354,7 +367,8 @@ export default function OrdersPage() {
         onConfirm={handleConfirmBooking}
         orderId={selectedOrderForBooking || ''}
         loading={bookingLoading}
+        initialSupplierInvoice={orders.find(o => o.order_no === selectedOrderForBooking)?.invoice_no || undefined}
       />
-    </div>
+    </div >
   )
 }
