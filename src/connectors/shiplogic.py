@@ -75,19 +75,19 @@ class ShiplogicConnector:
         Returns:
             List of available rates/services
         """
-            url = f"{self.base_url}/rates"
-            payload = {
-                "collection_address": collection_address,
-                "delivery_address": delivery_address,
-                "parcels": parcels,
-                "declared_value": declared_value,
-            }
-            
-            response = await self.session.post(url, json=payload)
-            response.raise_for_status()
-            
-            data = response.json()
-            return data.get("rates", [])
+        url = f"{self.base_url}/rates"
+        payload = {
+            "collection_address": collection_address,
+            "delivery_address": delivery_address,
+            "parcels": parcels,
+            "declared_value": declared_value,
+        }
+        
+        response = await self.session.post(url, json=payload)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data.get("rates", [])
 
     async def create_shipment(
         self,

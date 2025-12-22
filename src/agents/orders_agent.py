@@ -174,7 +174,8 @@ class OrdersLogisticsAgent:
                         logger.info("fetched_rates", order_id=order_id, count=len(rates), rates=[get_code(r) for r in rates])
                         
                         if not rates:
-                            raise Exception("No shipping rates returned by Shiplogic for this route.")
+                            import json
+                            raise Exception(f"No shipping rates returned. Col: {json.dumps(collection_address)}, Del: {json.dumps(delivery_address)}")
                             
                         available_services = {get_code(r): r for r in rates}
                         
