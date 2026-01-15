@@ -1,0 +1,5 @@
+SKU,Description,Cost,Stock
+TEST-SPK-001,Test Speaker System,1500.00,10
+TEST-AMP-002,Test Amplifier,2500.00,5
+TEST-CBL-003,Test HDMI Cable,150.00,100
+TEST-DIS-004,Discontinued Product,500.00,0

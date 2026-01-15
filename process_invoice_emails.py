@@ -160,7 +160,6 @@ def extract_header(headers, name: str) -> Optional[str]:
             return header["value"]
     return None
 
-
 def classify_email(from_email: str, subject: str, body: str) -> Dict[str, Any]:
     """Use AI to classify if email is a supplier invoice."""
     import json
@@ -179,6 +178,13 @@ Respond in JSON format:
   "supplier_name": "extracted supplier name or null",
   "reason": "brief explanation"
 }}
+
+IMPORTANT RULES:
+1. TRUE for: "Tax Invoice", "Proforma Invoice", "Invoice", "Statement" (if it contains new invoice details).
+2. TRUE for: "Order Confirmation", "Order Placed", "Sales Order", "Quote", "Estimate" IF it contains price/payment details (effectively a Proforma).
+3. TRUE for emails with subject "RE: Order (#...)" or similar if they contain attachment or payment details.
+4. FALSE only for: "Delivery Note" or "Payment Receipt" (unless it has an invoice attached).
+5. If the email is confirming an order you placed, treat it as a Proforma Invoice (TRUE).
 """
 
     try:
@@ -228,10 +234,19 @@ Extract the following information and respond in JSON format:
 }}
 
 Important:
-- Look for patterns like "Order #28757", "Order Number: 28757", "Re: 28757"
-- Invoice amount should be the TOTAL amount to be paid
-- Exclude VAT breakdowns, just get the final total
-- Return null if information cannot be found
+- **Order Number Rules:**
+    - Audico order numbers are typically 5 or 6 digits (e.g., 28757, 900009).
+    - If you see a number in parentheses like "(900009)", THAT is the order number.
+    - Ignore long alphanumeric strings like "ORD159582-01" if a 5-6 digit number is present.
+- **Amount Rules:**
+    - Look for "Total", "Amount Due", "Grand Total".
+    - Invoice amount should be the TOTAL amount to be paid.
+    - Exclude VAT breakdowns, just get the final total.
+- DO NOT extract amounts from "Order Confirmation" or "Quote" emails unless they are explicitly Proforma Invoices.
+- **Supplier Name Rules:**
+    - The Supplier is the company SELLING the goods (e.g., Homemation, Solution Technologies).
+    - It is NEVER a bank (e.g., First National Bank, FNB, Capitec, Standard Bank, Absa).
+    - If the email is from "support@audicoonline.co.za", check the BODY for the real supplier name (e.g. "We have received an invoice from Homemation").
 """
 
     try:
@@ -294,7 +309,7 @@ def update_order_tracker(order_no: str, invoice_data: Dict[str, Any], supplier_n
         return False
 
     # Add tracking info to updates field
-    current_updates = response.data[0].get('updates', '')
+    current_updates = response.data[0].get('updates') or ''
     new_update = f" | Invoice: {invoice_data.get('invoice_number', 'N/A')} Amount: R{invoice_data.get('invoice_amount', '0')}"
     update_data['updates'] = current_updates + new_update
 
@@ -383,30 +398,24 @@ async def process_emails(max_emails: int = 20, query: str = "is:unread"):
             if classification.get('is_supplier_invoice'):
                 print(f"  → Supplier Invoice Detected (Confidence: {classification.get('confidence')})")
                 print(f"  → Supplier: {classification.get('supplier_name')}")
+                
                 invoices_found += 1
-
-                # Extract invoice data
-                invoice_data = extract_invoice_data(
-                    from_email,
-                    subject,
-                    body,
-                    classification.get('supplier_name')
-                )
-
-                if invoice_data and invoice_data.get('order_number'):
-                    order_no = str(invoice_data['order_number']).strip('#').strip()
-                    print(f"  → Order Number: {order_no}")
-                    print(f"  → Invoice Number: {invoice_data.get('invoice_number')}")
-                    print(f"  → Amount: R{invoice_data.get('invoice_amount')}")
-
-                    # Update order tracker
-                    if update_order_tracker(order_no, invoice_data, classification.get('supplier_name')):
-                        orders_updated += 1
+                
+                # Extract details
+                print("  → Extracting invoice data...")
+                invoice_data = extract_invoice_data(from_email, subject, body, classification.get('supplier_name'))
+                
+                if invoice_data:
+                    print(f"  → Extracted: {invoice_data}")
+                    
+                    # Update Supabase
+                    if invoice_data.get('order_number'):
+                        # Clean order number (remove #)
+                        order_no = str(invoice_data['order_number']).replace('#', '').strip()
+                        if update_order_tracker(order_no, invoice_data, classification.get('supplier_name')):
+                            orders_updated += 1
                 else:
-                    print(f"  → Could not extract order number")
-            else:
-                print(f"  → Not a supplier invoice ({classification.get('reason')})")
-
+                    print("  → Failed to extract invoice data")
             processed += 1
 
         print(f"\n{'='*80}")

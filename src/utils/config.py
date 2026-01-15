@@ -66,6 +66,7 @@ class Config(BaseSettings):
     opencart_table_prefix: str = "oc_"
 
     # Shiplogic API
+    shiplogic_api_key: Optional[str] = None
     ship_logic_api_key: Optional[str] = None
 
     # Twilio (Optional - for future call center integration)

@@ -128,10 +128,13 @@ class OpenCartConnector:
             with connection.cursor() as cursor:
                 sql = f"""
                     SELECT 
-                        order_id, firstname, lastname, email, telephone,
-                        order_status_id, total, date_added
-                    FROM {self.prefix}order
-                    ORDER BY date_added DESC
+                        o.order_id, o.firstname, o.lastname, o.email, o.telephone,
+                        o.order_status_id, os.name as status_name, o.total, o.date_added,
+                        o.shipping_address_1, o.shipping_address_2, o.shipping_city, 
+                        o.shipping_postcode, o.shipping_zone, o.shipping_country
+                    FROM {self.prefix}order o
+                    LEFT JOIN {self.prefix}order_status os ON (o.order_status_id = os.order_status_id AND os.language_id = 1)
+                    ORDER BY o.date_added DESC
                     LIMIT %s
                 """
                 cursor.execute(sql, (limit,))
@@ -351,6 +354,160 @@ class OpenCartConnector:
                 'failed': len(updates),
                 'errors': [{'error': str(e)}]
             }
+        finally:
+            if connection:
+                connection.close()
+
+    async def get_manufacturer_by_name(self, name: str) -> Optional[Dict]:
+        """Get manufacturer by name."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"SELECT * FROM {self.prefix}manufacturer WHERE name = %s"
+                cursor.execute(sql, (name,))
+                return cursor.fetchone()
+        except Exception as e:
+            logger.error("get_manufacturer_failed", name=name, error=str(e))
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    async def get_products_by_manufacturer(self, manufacturer_id: int) -> List[Dict]:
+        """Get all products for a manufacturer."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"""
+                    SELECT p.product_id, p.model, p.quantity, p.price, pd.name 
+                    FROM {self.prefix}product p
+                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                    WHERE p.manufacturer_id = %s AND pd.language_id = 1
+                """
+                cursor.execute(sql, (manufacturer_id,))
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error("get_manufacturer_products_failed", id=manufacturer_id, error=str(e))
+            return []
+            if connection:
+                connection.close()
+
+    async def get_product_by_model(self, model: str) -> Optional[Dict]:
+        """Get product by exact model match."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"""
+                    SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
+                    FROM {self.prefix}product p
+                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
+                    WHERE p.model = %s AND pd.language_id = 1
+                """
+                cursor.execute(sql, (model,))
+                result = cursor.fetchone()
+                return result
+        except Exception as e:
+            logger.error("get_product_by_model_failed", model=model, error=str(e))
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    async def search_products_by_name(self, query: str) -> List[Dict]:
+        """Search products by name (partial match)."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                # Split query into words and search for products matching ALL words (up to 3)
+                words = query.split()[:3]
+                if not words:
+                    return []
+                
+                conditions = []
+                params = []
+                for word in words:
+                    # Remove special chars for search
+                    clean_word = "".join(c for c in word if c.isalnum())
+                    if len(clean_word) > 2: # Only search significant words
+                        conditions.append(f"pd.name LIKE %s")
+                        params.append(f"%{clean_word}%")
+                
+                if not conditions:
+                    return []
+                    
+                where_clause = " AND ".join(conditions)
+                
+                sql = f"""
+                    SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
+                    FROM {self.prefix}product p
+                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
+                    WHERE {where_clause} AND pd.language_id = 1
+                    LIMIT 20
+                """
+                cursor.execute(sql, tuple(params))
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error("search_products_failed", query=query, error=str(e))
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    async def create_product(self, product_data: Dict[str, Any]) -> Optional[int]:
+        """Create a new product in OpenCart."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                # 1. Insert into product table
+                sql_product = f"""
+                    INSERT INTO {self.prefix}product 
+                    (model, sku, quantity, stock_status_id, image, manufacturer_id, shipping, price, 
+                    points, tax_class_id, date_available, weight, weight_class_id, length, width, height, 
+                    length_class_id, subtract, minimum, sort_order, status, viewed, date_added, date_modified)
+                    VALUES 
+                    (%s, %s, %s, 7, '', %s, 1, %s, 0, 0, NOW(), 0, 1, 0, 0, 0, 1, 1, 1, 0, %s, 0, NOW(), NOW())
+                """
+                cursor.execute(sql_product, (
+                    product_data['sku'], # model = sku
+                    product_data['sku'],
+                    product_data['quantity'],
+                    product_data['manufacturer_id'],
+                    product_data['price'],
+                    product_data['status']
+                ))
+                product_id = cursor.lastrowid
+                
+                # 2. Insert into product_description
+                sql_desc = f"""
+                    INSERT INTO {self.prefix}product_description 
+                    (product_id, language_id, name, description, tag, meta_title, meta_description, meta_keyword)
+                    VALUES (%s, 1, %s, '', '', %s, '', '')
+                """
+                cursor.execute(sql_desc, (
+                    product_id,
+                    product_data['name'],
+                    product_data['name'] # meta_title = name
+                ))
+                
+                # 3. Insert into product_to_store (Default store 0)
+                sql_store = f"INSERT INTO {self.prefix}product_to_store (product_id, store_id) VALUES (%s, 0)"
+                cursor.execute(sql_store, (product_id,))
+                
+                connection.commit()
+                return product_id
+                
+        except Exception as e:
+            logger.error("create_product_failed", sku=product_data.get('sku'), error=str(e))
+            if connection:
+                connection.rollback()
+            return None
         finally:
             if connection:
                 connection.close()

@@ -1,0 +1,15 @@
+DEBUG: Script starting...
+DEBUG: Imported os/asyncio
+DEBUG: Imported dotenv
+DEBUG: Imported structlog
+DEBUG: Loaded env vars
+DEBUG: Imported StockListingsAgent
+DEBUG: Imported SupabaseConnector
+DEBUG: Imported OpenCartConnector
+DEBUG: Inside main
+DEBUG: Agents initialized
+Found 2 pending approvals
+Processing approval for: Back box for ISW-8 subwoofer
+Result: {'status': 'success', 'product_id': 16544}
+Processing approval for: Wireless speaker - AirPlay 2, Bluetooth aptX - Midnight Grey / Pearl G
+Result: {'status': 'success', 'product_id': 16545}

@@ -1,0 +1,33 @@
+--- Supabase Queue (Recent HTM6) ---
+
+--- OpenCart Search (HTM6) ---
+OC ID: 127
+Name:  Bowers and Wilkins HTM61
+SKU: BWHTM61
+Model: HTM61
+--------------------
+OC ID: 1711
+Name:  Bowers and Wilkins HTM62 S2 - New 600 Series Centre Speaker
+SKU: 
+Model: BW-HTM62-S2
+--------------------
+OC ID: 1712
+Name:  Bowers and Wilkins HTM61 S2 - New 600 Series Centre Speaker
+SKU: 
+Model: BW-HTM61-S2
+--------------------
+OC ID: 6039
+Name:  Bowers &amp; Wilkins HTM6 S2 Anniversary Edition - Center Speaker
+SKU: 
+Model: HTM6-S2
+--------------------
+OC ID: 4883
+Name:  Bowers and Wilkins HTM6 S2 - Center Speaker
+SKU: 
+Model: HTM6-S2
+--------------------
+OC ID: 7690
+Name: Bowers &amp; Wilkins HTM6 S3  - Center Speaker (New Range)
+SKU: 
+Model: HTM6-S3
+--------------------

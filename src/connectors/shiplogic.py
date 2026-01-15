@@ -15,7 +15,7 @@ class ShiplogicConnector:
     def __init__(self):
         """Initialize Shiplogic API client."""
         self.config = get_config()
-        self.api_key = self.config.ship_logic_api_key
+        self.api_key = self.config.shiplogic_api_key or self.config.ship_logic_api_key
         self.base_url = "https://api.shiplogic.com/v2"
         self.session = httpx.AsyncClient(
             timeout=30.0,

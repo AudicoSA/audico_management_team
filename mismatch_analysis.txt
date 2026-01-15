@@ -1,0 +1,101 @@
+Queue Item: Wall-mount Bracket (SKU: Zeppelin Wall-mount Bracket)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------
+Queue Item: Wireless speaker - 2x 25mm Titanium dome tweeter high-frequency, 2x 90mm FST midrange, 1x 150mm Subwoofer, 240W Amplifier power output, Adaptive aptX Bluetooth (SKU: Zeppelin Pro Edition)
+  Searching OpenCart by Name...
+  Candidate:  Polk FX Wireless Surround Speaker  (SKU: , Model: POLKFXW)
+  Similarity: 0.18
+  Candidate:  JBL Micro Wireless - Ultra Portable Bluetooth Speaker (SKU: , Model: MICROWIRELESS)
+  Similarity: 0.26
+  Candidate:  JBL Pulse - Wireless Bluetooth Loudspeaker with LED light show (SKU: , Model: PULSE)
+  Similarity: 0.16
+  Candidate: Harman Kardon Nova - 2.0 Wireless Powered Speakers - NFC and Bluetooth (SKU: , Model: HKNOVA)
+  Similarity: 0.29
+  Candidate:  Harman Kardon GO+PLAY - Wireless Streaming Speaker (SKU: , Model: HK-GO-PLAY)
+  Similarity: 0.15
+  Candidate: Harman Kardon Onyx - Wireless Portable Bluetooth Speaker (SKU: , Model: HK-ONYX)
+  Similarity: 0.22
+  Candidate:  Harman Kardon Aura - Luxury Wireless Bluetooth speaker with Airplay (SKU: , Model: HK-AURA)
+  Similarity: 0.16
+  Candidate: Klipsch Surround 3 Speakers - Wireless Surround speakers for the Klipsch Soundbar (SKU: , Model: SURROUND-3)
+  Similarity: 0.23
+  Candidate:  Sonos Roam with Charger - Portable Smart Speaker with Wireless Charger (SKU: , Model: ROAM+CHARGER)
+  Similarity: 0.10
+  Candidate: iLuv SyrenPro - Wireless Weather resistant outdoor Bluetooth Speaker with TrueWireless Stereo Pairing (SKU: , Model: iL-SYRENPRO)
+  Similarity: 0.15
+  Candidate: iLuv MobiRock - NFC Bluetooth Speaker with Wireless Charging (SKU: , Model: MOBIROCKBSBLK)
+  Similarity: 0.17
+  Candidate: iLuv MobiAria - NFC Wireless Bluetooth Speaker (SKU: , Model: MOBIARIABSBLK)
+  Similarity: 0.18
+  Candidate:  JBL GO - Portable wireless speaker (SKU: , Model: JBL-GO)
+  Similarity: 0.16
+  Candidate: Geneva Model M Wireless - Bluetooth Speaker / Radio / DAB+ (SKU: , Model: GENMWIRELESS)
+  Similarity: 0.18
+  Candidate: Divoom Voombox Ongo - Rugged portable wireless stereo speaker (SKU: , Model: DIVOOM-VOOMBOX-ONGO)
+  Similarity: 0.15
+  Candidate: Harman Kardon ONYX Studio 2 Wireless Speaker system with Bluetooth (SKU: , Model: ONYX Studio)
+  Similarity: 0.28
+  Candidate:  JBL Authentic L16 - Retro Wireless Bluetooth LoudSpeaker (SKU: , Model: JBL-L16)
+  Similarity: 0.17
+  Candidate:  Bowers and Wilkins Zeppelin Wireless - Bluetooth + Airplay Wireless Speaker (SKU: , Model: Zeppelin Wireless)
+  Similarity: 0.14
+  Candidate:  JBL Pulse 2 - Wireless Portable Bluetooth Speaker - Black (SKU: , Model: Pulse 2)
+  Similarity: 0.19
+  Candidate:  Bang &amp; Olufsen Beoplay A6  - Wireless Speaker (SKU: , Model: Bang &amp; Olufsen Beoplay A6  - Wireless Speaker)
+  Similarity: 0.15
+------------------------------
+Queue Item: Back box for ISW-4 subwoofer (SKU: BB ISW-4)
+  Searching OpenCart by Name...
+  Candidate: Monitor Audio IWB-10 back box for IWS-10 (SKU: , Model:  IWB-10 back box for IWS-10)
+  Similarity: 0.47
+  Candidate: JBL MTC-200BB6 Back Box for Control 200 Series Ceiling Speakers (SKU: MTC-200BB6, Model: MTC-200BB6)
+  Similarity: 0.37
+  Candidate: Bowers &amp; Wilkins Back Box for ISW-8 Subwoofer (SKU: BB ISW-8, Model: BB ISW-8)
+  Similarity: 0.70
+------------------------------
+Queue Item: Grille for ISW-6 subwoofer (SKU: GR ISW-6)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------
+Queue Item: In-wall subwoofer - 12" Aer0foil woofer (SKU: ISW-8)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------
+Queue Item: In-wall subwoofer - 2 x 7" racetrack drivers (SKU: ISW-6)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------
+Queue Item: In-wall subwoofer - 2 x 8" long throw drivers (SKU: ISW-4)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------
+Queue Item: In-wall subwoofer - 2 x 6½" Paper/Kevlar cones (SKU: ISW-3)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------
+Queue Item: Back Box (SKU: CWM 8.3)
+  Searching OpenCart by Name...
+  Candidate: Monitor Audio IWB-10 back box for IWS-10 (SKU: , Model:  IWB-10 back box for IWS-10)
+  Similarity: 0.33
+  Candidate: JBL MTC-200BB6 Back Box for Control 200 Series Ceiling Speakers (SKU: MTC-200BB6, Model: MTC-200BB6)
+  Similarity: 0.23
+  Candidate: BOSE PRO FreeSpace FS series FS4CEB - black ceiling mount loudspeaker with backbox and push fit grille (SKU: FS4CEB, Model: FS4CEB)
+  Similarity: 0.13
+  Candidate: BOSE PRO DesignMax DM3CB - black 2 way ceiling mount loudspeaker with backbox and magnetic full face grille (Pair) (SKU: DM3CB, Model: DM3CB)
+  Similarity: 0.11
+  Candidate: BOSE PRO DesignMax DM8CW - white 2 way ceiling mount loudspeaker with backbox and magnetic full face grille (Each) (SKU: DM8CW, Model: DM8CW)
+  Similarity: 0.11
+  Candidate: BOSE PRO DesignMax White 2-Way Ceiling Mount Loudspeaker with Backbox, Magnetic Grille, (Pair) (SKU: DM3CW, Model: DM3CW)
+  Similarity: 0.14
+  Candidate: BOSE PRO DesignMax DM8CB - black 2 way ceiling mount loudspeaker with backbox and magnetic full face grille (Each) (SKU: DM8CB, Model: DM8CB)
+  Similarity: 0.11
+  Candidate: BOSE PRO DesignMax DM5CB - black 2 way ceiling mount loudspeaker with backbox and magnetic full face grille (Pairs) (SKU: DM5CB, Model: DM5CB)
+  Similarity: 0.11
+  Candidate: Bowers &amp; Wilkins Back Box for ISW-8 Subwoofer (SKU: BB ISW-8, Model: BB ISW-8)
+  Similarity: 0.28
+------------------------------
+Queue Item: In-wall dual 7" 3 way loudspeaker (SKU: CWM 8.3 D)
+  Searching OpenCart by Name...
+  No candidates found by name search.
+------------------------------

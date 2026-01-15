@@ -53,6 +53,18 @@ export default function RootLayout({
                     >
                       📝 Logs
                     </Link>
+                    <Link
+                      href="/products"
+                      className="border-transparent text-gray-500 hover:border-blue-500 hover:text-blue-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors"
+                    >
+                      🛍️ Products
+                    </Link>
+                    <Link
+                      href="/products/new"
+                      className="border-transparent text-gray-500 hover:border-blue-500 hover:text-blue-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors"
+                    >
+                      🆕 New Products
+                    </Link>
                   </div>
                 </div>
                 <div className="flex items-center">

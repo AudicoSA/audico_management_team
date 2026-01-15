@@ -1,0 +1,24 @@
+Queue Item ID: 1cc0acda-c43e-4285-b3b0-1fc33fde4bd0
+Name in Queue: 'Zeppelin Wall-mount Bracket'
+SKU in Queue: 'ZWMB'
+
+--- Running Search Logic ---
+Query: 'Zeppelin Wall-mount Bracket'
+  -> Found 0 results
+Query: 'Zeppelin Wall-mount Bracket'
+  -> Found 0 results
+Query: 'Zeppelin Wall-mount'
+  -> Found 0 results
+Query: 'Wall-mount'
+  -> Found 2 results
+     Candidate: 'Yealink Wallmount For MeetinGBar A50' (ID: 12383)
+     Candidate: 'Yealink MeetingBoard75 Pro 75 Inch All-In-One Collaboration Display with Power Adapter (Excludes Wallmount)' (ID: 12592)
+
+Total Candidates Found: 2
+
+--- Running Comparison Logic ---
+Comparing with: 'Yealink Wallmount For MeetinGBar A50' -> Ratio: 0.5614
+Comparing with: 'Yealink MeetingBoard75 Pro 75 Inch All-In-One Collaboration Display with Power Adapter (Excludes Wallmount)' -> Ratio: 0.2167
+
+Best Ratio: 0.5614
+CONCLUSION: NO MATCH

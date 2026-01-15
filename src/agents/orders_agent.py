@@ -93,21 +93,63 @@ class OrdersLogisticsAgent:
                     "country_code": "ZA", # Default to ZA
                 }
             
-            # Collection address (Audico HQ - hardcoded for now or fetch from config)
-            # Allow override from input data (for Drop Shipping)
+            # Collection address (Audico HQ Default)
+            # Allow override from input data (for Drop Shipping manually specified)
             custom_collection = data.get("collection_address")
+            
+            # Default Collection (Audico)
+            collection_address = {
+                "company": "Audico Online",
+                "street_address": "Audiovisual House, 58b Maple Road",
+                "local_area": "Pomona",
+                "city": "Kempton Park",
+                "code": "1619",
+                "country_code": "ZA",
+            }
+            collection_contact = {
+                "name": "Dispatch Team",
+                "mobile_number": "011 392 5639", 
+                "email": "dispatch@audico.co.za"
+            }
+
             if custom_collection:
                 collection_address = custom_collection
             else:
-                # Default Placeholder
-                collection_address = {
-                    "company": "Audico Online",
-                    "street_address": "123 Example Street", # Placeholder
-                    "local_area": "Sandton",
-                    "city": "Johannesburg",
-                    "code": "2000",
-                    "country_code": "ZA",
-                }
+                # Attempt to determine Supplier from Product (Dropshipping)
+                try:
+                    order_products = order.get('products', [])
+                    if order_products:
+                        # Use the first product to determine supplier (Simplified assumption for now)
+                        # TODO: Handle mixed-supplier orders (split shipments?)
+                        first_product = order_products[0]
+                        model = first_product.get('model')
+                        
+                        prod_details = await self.opencart.get_product_by_model(model)
+                        if prod_details and prod_details.get('manufacturer'):
+                            supplier_name = prod_details.get('manufacturer')
+                            logger.info("identifying_supplier", order_id=order_id, supplier=supplier_name)
+                            
+                            # Lookup Supplier Address
+                            supplier_info = await self.supabase.get_supplier_address(supplier_name)
+                            if supplier_info:
+                                logger.info("found_supplier_address", supplier=supplier_name)
+                                collection_address = {
+                                    "company": supplier_info.get("company", supplier_name),
+                                    "street_address": supplier_info.get("street_address"),
+                                    "local_area": supplier_info.get("local_area"),
+                                    "city": supplier_info.get("city"),
+                                    "code": supplier_info.get("code"),
+                                    "country_code": supplier_info.get("country_code", "ZA"),
+                                }
+                                collection_contact = {
+                                    "name": supplier_info.get("contact_name") or "Dispatch",
+                                    "mobile_number": supplier_info.get("contact_phone") or "",
+                                    "email": supplier_info.get("contact_email") or ""
+                                }
+                            else:
+                                logger.warning("supplier_address_not_found", supplier=supplier_name, note="Using Audico HQ")
+                except Exception as e:
+                    logger.error("failed_to_resolve_supplier_address", error=str(e))
 
             # 3. Prepare parcels
             # Simplified: 1 parcel, 2kg
@@ -124,13 +166,6 @@ class OrdersLogisticsAgent:
                 "name": f"{order.get('firstname', '')} {order.get('lastname', '')}".strip(),
                 "mobile_number": order.get("telephone", ""),
                 "email": order.get("email", "")
-            }
-            
-            # Default Collection Contact (Audico)
-            collection_contact = {
-                "name": "Dispatch Team",
-                "mobile_number": "", 
-                "email": "dispatch@audico.co.za"
             }
 
             # 5. Create Shipment

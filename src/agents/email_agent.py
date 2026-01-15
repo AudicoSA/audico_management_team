@@ -299,6 +299,7 @@ class EmailManagementAgent:
         """Extract order numbers from email subject and body.
 
         Looks for patterns like: #12345, Order 12345, Order #12345
+        Also looks for standalone 6-digit numbers in the Subject (e.g. FW: 900145).
         """
         combined_text = f"{subject} {body}"
         patterns = [
@@ -308,6 +309,14 @@ class EmailManagementAgent:
         ]
 
         order_numbers = []
+        
+        # 1. Strict Subject Scan: Look for standalone 6-digit numbers (common in FW/RE emails)
+        # Matches: "900145", "FW: 900145", "Re: 900145"
+        subject_pattern = r"(?:^|\s|:|#)(\d{6})(?:$|\s)"
+        subject_matches = re.findall(subject_pattern, subject, re.IGNORECASE)
+        order_numbers.extend(subject_matches)
+
+        # 2. General Scan
         for pattern in patterns:
             matches = re.findall(pattern, combined_text, re.IGNORECASE)
             order_numbers.extend(matches)

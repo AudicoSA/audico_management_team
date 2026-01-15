@@ -1,0 +1,1 @@
+Columns: ['id', 'supplier_name', 'sku', 'name', 'cost_price', 'stock_level', 'status', 'created_at']

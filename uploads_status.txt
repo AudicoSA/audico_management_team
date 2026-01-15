@@ -1,0 +1,30 @@
+ID: a1735a5c-8b6d-4e91-bae0-0cac71c3a826
+Filename: Bowers_Wilkins_October_2025_RETAIL.pdf
+Status: processing
+Created At: 2025-11-30T16:21:35.499267+00:00
+Error: None
+--------------------
+ID: e3bcf21e-01df-4f54-bea0-cf75957070b6
+Filename: Bowers_Wilkins_October_2025_RETAIL.pdf
+Status: processing
+Created At: 2025-11-30T15:02:16.296877+00:00
+Error: None
+--------------------
+ID: 56e37da2-9970-4135-ada5-3af3019274dd
+Filename: Bowers_Wilkins_October_2025_RETAIL.pdf
+Status: processing
+Created At: 2025-11-30T12:41:56.439069+00:00
+Error: None
+--------------------
+ID: 2d0d1774-95ad-4d51-a804-d2e9b90516eb
+Filename: Bowers_Wilkins_October_2025_RETAIL.pdf
+Status: failed
+Created At: 2025-11-30T12:15:48.332602+00:00
+Error: StockListingsAgent.process_price_list() got an unexpected keyword argument 'upload_id'
+--------------------
+ID: 38c1655e-133a-4837-acf1-4cfe0a38cac7
+Filename: Bowers_Wilkins_October_2025_RETAIL.pdf
+Status: failed
+Created At: 2025-11-30T12:01:20.584525+00:00
+Error: StockListingsAgent.process_price_list() got an unexpected keyword argument 'upload_id'
+--------------------

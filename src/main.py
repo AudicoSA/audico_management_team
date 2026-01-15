@@ -200,6 +200,9 @@ async def create_shipment(payload: Dict[str, Any]):
     """Create a shipment for an order."""
     try:
         agent = get_orders_agent()
+        # Logging payload for debugging
+        logger.info("shipment_creation_request", order_id=payload.get("order_id"), has_supplier_invoice="supplier_invoice" in payload, supplier_invoice=payload.get("supplier_invoice"))
+        
         # Ensure action is set
         payload["action"] = "create_shipment"
         result = await agent.run(payload)

@@ -35,81 +35,138 @@ async def import_orders(days_back: int = 30, limit: int = 50):
         limit: Maximum number of orders to import (default: 50)
     """
     try:
+        # Strict limit as requested
+        limit = 100 
         logger.info("import_started", days_back=days_back, limit=limit)
-        print(f"Importing orders from OpenCart (last {days_back} days)...")
+        print(f"Importing LAST {limit} orders from OpenCart...")
 
         # Initialize connectors
         opencart = OpenCartConnector()
         supabase = SupabaseConnector()
 
         # Fetch recent orders from OpenCart
-        print("Fetching orders from OpenCart...")
-        orders = await opencart.get_recent_orders(days_back=days_back, limit=limit)
+        print("Fetching recent orders list...")
+        recent_orders = await opencart.get_recent_orders(days_back=days_back, limit=limit)
 
-        if not orders:
+        if not recent_orders:
             print("No orders found in OpenCart")
             logger.warning("no_orders_found")
             return
 
-        print(f"Found {len(orders)} orders from OpenCart")
-        logger.info("orders_fetched", count=len(orders))
+        print(f"Found {len(recent_orders)} orders. Filtering and Processing...")
+        logger.info("orders_fetched", count=len(recent_orders))
 
         # Transform and sync to Supabase
         imported = 0
         updated = 0
         skipped = 0
 
-        for order in orders:
-            try:
-                order_no = str(order.get("order_id", ""))
+        # Strict Status Filtering
+        ALLOWED_STATUSES = ["Processing", "Awaiting Payment"]
 
-                if not order_no:
+        for simple_order in recent_orders:
+            try:
+                order_id = str(simple_order.get("order_id", ""))
+                if not order_id:
                     skipped += 1
                     continue
 
-                # Transform OpenCart order to orders_tracker format
-                tracker_order = {
-                    "order_no": order_no,
-                    "order_name": extract_product_names(order),
-                    "supplier": None,  # Will be set manually or by agent
-                    "notes": f"Customer: {order.get('customer', 'Unknown')}",
+                # Fetch FULL order details to get products and customer info
+                order = await opencart.get_order(order_id)
+                if not order:
+                    print(f"  Warning: Could not fetch details for order {order_id}")
+                    continue
+
+                # Use status from simple_order (get_recent_orders has the join)
+                status_name = simple_order.get('status_name', 'Unknown')
+                
+                # STRICT FILTER: Only allow Processing or Awaiting Payment
+                if status_name not in ALLOWED_STATUSES:
+                    # print(f"  Skipping Order #{order_id} (Status: {status_name})") # Verbose
+                    skipped += 1
+                    continue
+
+                # Construct Customer Name
+                customer_name = f"{order.get('firstname', '')} {order.get('lastname', '')}".strip()
+                if not customer_name:
+                    customer_name = "Unknown"
+                
+                # Construct Product Names string
+                product_names = extract_product_names(order)
+
+                # Paid Logic: Processing = Paid, Awaiting Payment = Unpaid
+                is_paid = status_name == "Processing"
+
+                # Prepare base data from OpenCart
+                opencart_data = {
+                    "order_no": order_id,
+                    "order_name": product_names, # User requested Order Name = Product Name
                     "cost": float(order.get("total", 0)),
-                    "invoice_no": None,
-                    "order_paid": order.get("payment_method") != "COD",
-                    "supplier_amount": None,
-                    "shipping": float(order.get("shipping_cost", 0)),
-                    "profit": None,  # To be calculated
-                    "updates": f"Status: {order.get('status_name', 'Unknown')}",
-                    "owner_wade": False,
-                    "owner_lucky": False,
-                    "owner_kenny": False,
-                    "owner_accounts": False,
-                    "flag_done": order.get("status_name") in ["Complete", "Shipped"],
-                    "flag_urgent": order.get("status_name") == "Pending",
+                    "order_paid": is_paid,
+                    "flag_done": False, # Default to not done
+                    "flag_urgent": status_name == "Processing", # Maybe urgent if paid?
                     "source": "opencart",
                     "last_modified_by": "import_script",
+                    "supplier_status": "Pending" # Default
                 }
 
                 # Check if order already exists
-                response = supabase.client.table("orders_tracker").select("*").eq("order_no", order_no).execute()
+                response = supabase.client.table("orders_tracker").select("*").eq("order_no", order_id).execute()
 
                 if response.data:
-                    # Update existing
-                    supabase.client.table("orders_tracker").update(tracker_order).eq("order_no", order_no).execute()
-                    updated += 1
-                    print(f"  Updated: Order #{order_no}")
-                else:
-                    # Insert new
-                    supabase.client.table("orders_tracker").insert(tracker_order).execute()
-                    imported += 1
-                    print(f"  Imported: Order #{order_no} - {tracker_order['order_name']}")
+                    existing_order = response.data[0]
+                    
+                    # SAFE UPDATE: Only update specific fields
+                    update_payload = {
+                        "order_name": opencart_data["order_name"],
+                        "cost": opencart_data["cost"],
+                        "order_paid": opencart_data["order_paid"],
+                        # Do not overwrite flags if they were manually changed? 
+                        # User asked to "start again", so maybe we should overwrite?
+                        # "place tick on paid for processing orders, place x on awaiting payment"
+                        # implies strict sync.
+                    }
 
-                logger.info("order_synced", order_no=order_no, action="update" if response.data else "insert")
+                    # Only update notes if it's currently "Customer: Unknown" or empty
+                    current_notes = existing_order.get("notes", "")
+                    if not current_notes or current_notes == "Customer: Unknown":
+                         update_payload["notes"] = f"Customer: {customer_name} | Email: {order.get('email', '')}"
+
+                    # Append status to updates log
+                    current_updates = existing_order.get("updates", "")
+                    new_status = f"Status: {status_name}"
+                    if new_status not in current_updates:
+                        update_payload["updates"] = f"{current_updates} | {new_status}"
+
+                    supabase.client.table("orders_tracker").update(update_payload).eq("order_no", order_id).execute()
+                    updated += 1
+                    print(f"  Updated: Order #{order_id} ({status_name})")
+
+                else:
+                    # Insert new order
+                    new_order = opencart_data.copy()
+                    new_order["supplier"] = None
+                    new_order["notes"] = f"Customer: {customer_name} | Email: {order.get('email', '')}"
+                    new_order["invoice_no"] = None
+                    new_order["supplier_amount"] = None
+                    new_order["shipping"] = 0 
+                    new_order["profit"] = None
+                    new_order["updates"] = f"Status: {status_name}"
+                    new_order["owner_wade"] = False
+                    new_order["owner_lucky"] = False
+                    new_order["owner_kenny"] = False
+                    new_order["owner_accounts"] = False
+
+                    supabase.client.table("orders_tracker").insert(new_order).execute()
+                    imported += 1
+                    print(f"  Imported: Order #{order_id} ({status_name}) - {new_order['order_name']}")
+
+                logger.info("order_synced", order_no=order_id, action="update" if response.data else "insert")
 
             except Exception as e:
                 skipped += 1
-                logger.error("order_sync_failed", order_no=order.get("order_id"), error=str(e))
-                print(f"  Error syncing order {order.get('order_id')}: {e}")
+                logger.error("order_sync_failed", order_no=simple_order.get("order_id"), error=str(e))
+                print(f"  Error syncing order {simple_order.get('order_id')}: {e}")
 
         print(f"\n{'='*50}")
         print(f"Import completed!")
@@ -117,15 +174,6 @@ async def import_orders(days_back: int = 30, limit: int = 50):
         print(f"  Updated:  {updated}")
         print(f"  Skipped:  {skipped}")
         print(f"{'='*50}")
-        print(f"\nCheck your dashboard: http://localhost:3001/orders")
-
-        logger.info(
-            "import_completed",
-            imported=imported,
-            updated=updated,
-            skipped=skipped,
-            total=len(orders),
-        )
 
     except Exception as e:
         logger.error("import_failed", error=str(e))

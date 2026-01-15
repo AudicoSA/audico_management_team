@@ -1,0 +1,5 @@
+ID: b4f0f47c-40d2-48e0-8304-342bd55725f7
+Name: Back box for ISW-8 subwoofer
+Status: approved_pending
+Created: 2025-11-30T09:57:02.603803+00:00
+--------------------

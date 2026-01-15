@@ -5,10 +5,13 @@ Uses Google Gemini's File Search tool to extract structured product data
 from any format (CSV, Excel, PDF, scanned images) without manual parsing.
 """
 import json
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from datetime import datetime
 import structlog
-import google.generativeai as genai
+from openai import OpenAI
+import io
+import pandas as pd
+import re
 from pydantic import BaseModel
 
 from ..connectors.supabase import SupabaseConnector
@@ -37,14 +40,14 @@ class StockListingsAgent:
         self.supabase = supabase
         self.opencart = opencart
         
-        # Initialize Gemini
+        # Initialize OpenAI
         config = get_config()
-        genai.configure(api_key=config.get("GEMINI_API_KEY") or config.get("GOOGLE_API_KEY"))
-        self.model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        self.client = OpenAI(api_key=config.openai_api_key)
+        self.model = "gpt-4o"
         
         logger.info("stock_listings_agent_initialized", 
                    agent="StockListingsAgent", 
-                   model="gemini-2.0-flash-exp")
+                   model=self.model)
     
     async def get_pricing_rule(self, supplier_id: str) -> Optional[Dict]:
         """Get pricing rule for a supplier."""
@@ -59,9 +62,200 @@ class StockListingsAgent:
                 logger.info("pricing_rule_found", supplier_id=supplier_id)
                 return response.data
             return None
+            logger.warning("pricing_rule_not_found", supplier_id=supplier_id, error=str(e))
+            return None
         except Exception as e:
             logger.warning("pricing_rule_not_found", supplier_id=supplier_id, error=str(e))
             return None
+
+    async def _extract_text_from_file(self, file_data: bytes, filename: str) -> Optional[str]:
+        """Extract text from PDF, Excel, or CSV."""
+        try:
+            file_ext = filename.split('.')[-1].lower()
+            
+            if file_ext == 'pdf':
+                # Parse PDF
+                import pypdf
+                pdf_file = io.BytesIO(file_data)
+                reader = pypdf.PdfReader(pdf_file)
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text() + "\n"
+                return text
+                
+            elif file_ext in ['xlsx', 'xls']:
+                # Parse Excel (All Sheets)
+                excel_file = io.BytesIO(file_data)
+                xls = pd.ExcelFile(excel_file)
+                text = ""
+                for sheet_name in xls.sheet_names:
+                    df = pd.read_excel(xls, sheet_name=sheet_name)
+                    text += f"\n--- Sheet: {sheet_name} ---\n"
+                    text += df.to_csv(index=False)
+                return text
+                
+            elif file_ext == 'csv':
+                # Parse CSV
+                csv_file = io.BytesIO(file_data)
+                df = pd.read_csv(csv_file)
+                return df.to_csv(index=False)
+                
+            return None
+            
+        except Exception as e:
+            logger.error("file_extraction_failed", error=str(e))
+            return None
+
+    async def _extract_with_openai(self, text_content: str, supplier_name: str) -> Optional[PriceListData]:
+        """
+        Extract structured product data from text using OpenAI GPT-4o.
+        """
+        try:
+            # Truncate text if too long (approx 100k chars)
+            if len(text_content) > 100000:
+                text_content = text_content[:100000] + "...(truncated)"
+                
+            prompt = f"""
+            You are a data extraction assistant. Extract product information from the following supplier price list text.
+            Supplier: {supplier_name}
+            
+            Rules:
+            1. Extract SKU, Name, Price, and Stock Level.
+            2. If 'Stock' column is missing, assume 0 or look for 'In Stock'/'Yes' indicators (convert to 100).
+            3. Ignore headers, footers, and page numbers.
+            4. Return JSON only, matching this schema:
+            {{
+                "supplier_name": "{supplier_name}",
+                "products": [
+                    {{
+                        "sku": "string",
+                        "name": "string",
+                        "price": number,
+                        "stock": integer
+                    }}
+                ]
+            }}
+            
+            Special Rules for Nology:
+            - Use the 'Cost' column if available, otherwise 'Price'.
+            - Ignore 'MSRP' or 'RRP'.
+            
+            Text Content:
+            {text_content}
+            """
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that extracts structured data from text."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+            
+            content = response.choices[0].message.content
+            result_json = json.loads(content)
+            price_list_data = PriceListData(**result_json)
+            
+            logger.info("openai_extraction_complete", 
+                       products_extracted=len(price_list_data.products))
+            
+            return price_list_data
+            
+        except Exception as e:
+            logger.error("openai_extraction_failed", error=str(e))
+            return None
+
+    def _normalize_string(self, s: str) -> str:
+        """Remove non-alphanumeric characters and lowercase."""
+        if not s:
+            return ""
+        return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+    async def process_price_list(
+        self,
+        file_data: bytes,
+        filename: str,
+        supplier_name: str,
+        instruction: str = 'cost_excl_vat',
+        upload_id: Optional[str] = None,
+        markup_pct: Optional[float] = None
+    ) -> Dict:
+        """
+        Process a supplier price list using OpenAI GPT-4o.
+        """
+        logger.info("processing_price_list_with_openai", 
+                   filename=filename, 
+                   supplier=supplier_name,
+                   instruction=instruction,
+                   markup_pct=markup_pct,
+                   existing_upload_id=upload_id)
+        
+        try:
+            # 1. Upload file to Supabase Storage (for archival)
+            storage_path = await self._upload_to_storage(file_data, filename, supplier_name)
+            
+            # 2. Create or Update upload record
+            if not upload_id:
+                upload_id = await self._create_upload_record(
+                    supplier_name, filename, storage_path
+                )
+            else:
+                self.supabase.client.table("price_list_uploads").update({
+                    "storage_path": storage_path,
+                    "status": "processing"
+                }).eq("id", upload_id).execute()
+            
+            # 3. Extract text/data from file locally
+            text_content = await self._extract_text_from_file(file_data, filename)
+            
+            if not text_content:
+                 return {"status": "failed", "error": "Could not extract text from file"}
+
+            # 4. Extract structured data using OpenAI
+            price_list_data = await self._extract_with_openai(text_content, supplier_name)
+            
+            if not price_list_data or not price_list_data.products:
+                return {"status": "failed", "error": "No products extracted"}
+            
+            # 5. Process each product
+            extracted_skus = set()
+            changes_detected = 0
+            
+            for product in price_list_data.products:
+                extracted_skus.add(product.sku)
+                
+                # Store in supplier_catalogs
+                await self._upsert_supplier_catalog(upload_id, supplier_name, product)
+                
+                # Detect changes vs OpenCart (Price only)
+                detected = await self._detect_changes(upload_id, supplier_name, product, instruction, markup_pct)
+                changes_detected += detected
+            
+            # 6. Process Discontinued Products (Missing from file)
+            discontinued_count = await self._process_discontinued_products(supplier_name, extracted_skus, price_list_data.products)
+            changes_detected += discontinued_count
+            
+            # 7. Mark upload as completed
+            await self._mark_upload_completed(upload_id, len(price_list_data.products), len(price_list_data.products))
+            
+            logger.info("price_list_processed_with_openai",
+                       upload_id=upload_id,
+                       products=len(price_list_data.products),
+                       changes=changes_detected,
+                       discontinued=discontinued_count)
+            
+            return {
+                "status": "completed",
+                "upload_id": upload_id,
+                "rows_processed": len(price_list_data.products),
+                "changes_detected": changes_detected,
+                "discontinued": discontinued_count
+            }
+            
+        except Exception as e:
+            logger.error("openai_price_list_processing_failed", error=str(e))
+            return {"status": "failed", "error": str(e)}
     
     async def calculate_retail_price(
         self, 
@@ -92,75 +286,118 @@ class StockListingsAgent:
         retail_price = cost_price * (1 + (markup_pct / 100.0))
         return round(retail_price, 2)
     
-    async def process_price_list(
-        self,
-        file_data: bytes,
-        filename: str,
-        supplier_name: str
-    ) -> Dict:
+
+    async def approve_new_product(self, queue_id: str) -> Dict:
         """
-        Process a supplier price list using Gemini File API.
-        
-        Args:
-            file_data: Raw file bytes (CSV/Excel/PDF/any format)
-            filename: Original filename
-            supplier_name: Name of the supplier
-            
-        Returns:
-            Dict with processing summary
+        Approve a product from the queue and create it in OpenCart.
         """
-        logger.info("processing_price_list_with_gemini", 
-                   filename=filename, 
-                   supplier=supplier_name)
-        
         try:
-            # 1. Upload file to Supabase Storage (for archival)
-            storage_path = await self._upload_to_storage(file_data, filename, supplier_name)
+            # 1. Get product from queue
+            response = self.supabase.client.table("new_products_queue")\
+                .select("*")\
+                .eq("id", queue_id)\
+                .single()\
+                .execute()
             
-            # 2. Create upload record
-            upload_id = await self._create_upload_record(
-                supplier_name, filename, storage_path
-            )
+            if not response.data:
+                return {"status": "failed", "error": "Product not found in queue"}
             
-            # 3. Upload to Gemini File API
-            gemini_file = await self._upload_to_gemini(file_data, filename)
+            product = response.data
             
-            # 4. Extract structured data using Gemini
-            price_list_data = await self._extract_with_gemini(gemini_file, supplier_name)
+            # 2. Get manufacturer (brand) name
+            supplier_name = product.get('supplier_name')
+            # Try to find manufacturer in OpenCart to get correct casing
+            manufacturer = await self.opencart.get_manufacturer_by_name(supplier_name)
             
-            if not price_list_data or not price_list_data.products:
-                await self._mark_upload_failed(upload_id, "No products extracted from file")
-                return {"status": "failed", "error": "No products extracted"}
+            # 3. Create product in OpenCart
             
-            # 5. Process each product
-            changes_detected = 0
-            for product in price_list_data.products:
-                # Store in supplier_catalogs
-                await self._upsert_supplier_catalog(upload_id, supplier_name, product)
+            # Check if product already exists to prevent duplicates (Idempotency)
+            # Use robust lookup (SKU, Model, Normalized Model)
+            existing_product = await self._find_existing_product(product['sku'])
+            if existing_product:
+                logger.info("product_already_exists_skipping_creation", sku=product['sku'])
+                product_id = existing_product['product_id']
+            else:
+                # Construct Name: BRAND MODEL - DESCRIPTION
+                product_name_parts = []
                 
-                # Detect changes vs OpenCart
-                detected = await self._detect_changes(upload_id, supplier_name, product)
-                changes_detected += detected
+                # 1. Brand/Manufacturer
+                brand_name = None
+                if manufacturer:
+                    brand_name = manufacturer['name']
+                elif supplier_name and "manual" not in supplier_name.lower():
+                    brand_name = supplier_name
+                
+                if brand_name:
+                    product_name_parts.append(brand_name)
+                    
+                # 2. Model (SKU)
+                # Only add SKU if it's not already in the description to avoid redundancy
+                sku = product['sku']
+                if sku and sku.lower() not in product['name'].lower():
+                     product_name_parts.append(sku)
+                
+                # Join Brand and Model
+                prefix = " ".join(product_name_parts)
+                
+                # 3. Description
+                # Use " - " separator if we have a prefix
+                if prefix:
+                    product_name = f"{prefix} - {product['name']}"
+                else:
+                    product_name = product['name']
+
+                # Calculate retail price
+                # User indicated they upload as Retail, so treat the stored 'cost_price' as Retail Price
+                # and reverse-calculate the Cost Price using the default markup (1.5)
+                retail_price = float(product['cost_price'])
+                cost_price = retail_price / 1.5
+                
+                product_data = {
+                    "sku": product['sku'],
+                    "name": product_name,
+                    "price": retail_price,
+                    "cost": cost_price,
+                    "quantity": product['stock_level'],
+                    "manufacturer_id": manufacturer['manufacturer_id'] if manufacturer else 0,
+                    "status": 1  # Enabled
+                }
+                
+                product_id = await self.opencart.create_product(product_data)
             
-            # 6. Mark upload as completed
-            await self._mark_upload_completed(upload_id, len(price_list_data.products), len(price_list_data.products))
+            if not product_id:
+                return {"status": "failed", "error": "Failed to create product in OpenCart"}
             
-            logger.info("price_list_processed_with_gemini",
-                       upload_id=upload_id,
-                       products=len(price_list_data.products),
-                       changes=changes_detected)
+            # 4. Update queue status
+            self.supabase.client.table("new_products_queue").update({
+                "status": "approved"
+            }).eq("id", queue_id).execute()
             
-            return {
-                "status": "completed",
-                "upload_id": upload_id,
-                "rows_processed": len(price_list_data.products),
-                "changes_detected": changes_detected
-            }
+            logger.info("product_approved_and_created", 
+                       queue_id=queue_id, 
+                       product_id=product_id,
+                       sku=product['sku'])
+            
+            return {"status": "success", "product_id": product_id}
             
         except Exception as e:
-            logger.error("gemini_price_list_processing_failed", error=str(e))
+            logger.error("approve_product_failed", queue_id=queue_id, error=str(e))
             return {"status": "failed", "error": str(e)}
-    
+
+    async def _queue_new_product(self, supplier_name: str, product: ProductData):
+        """Add new product to the review queue."""
+        try:
+            self.supabase.client.table("new_products_queue").insert({
+                "supplier_name": supplier_name,
+                "sku": product.sku,
+                "name": product.name,
+                "cost_price": product.price,
+                "stock_level": product.stock,
+                "status": "pending"
+            }).execute()
+        except Exception as e:
+            logger.error("queue_new_product_failed", sku=product.sku, error=str(e))
+
     async def _upload_to_storage(self, file_data: bytes, filename: str, supplier_name: str) -> str:
         """Upload price list to Supabase Storage for archival."""
         now = datetime.utcnow()
@@ -281,19 +518,115 @@ Extract ALL products - do not skip any rows.
             "raw_data": product.dict()
         }, on_conflict="supplier_name,sku").execute()
     
-    async def _detect_changes(self, upload_id: str, supplier_name: str, product: ProductData) -> int:
+    async def _find_existing_product(self, sku: str) -> Optional[Dict]:
         """
-        Compare product data with OpenCart and create price_change_queue for differences.
-        Applies pricing rules before comparison.
+        Find product by SKU or Model, handling common formatting differences.
+        """
+        # 1. Exact SKU match
+        product = await self.opencart.get_product_by_sku(sku)
+        if product:
+            return product
+            
+        # 2. Exact Model match
+        product = await self.opencart.get_product_by_model(sku)
+        if product:
+            return product
+            
+        # 3. Normalized Model match (try variations)
+        # e.g. "HTM6 S3" vs "HTM6-S3"
+        variations = [
+            sku.replace(" ", "-"),
+            sku.replace("-", " "),
+            sku.replace(" ", ""),
+            sku.replace("-", "")
+        ]
+        
+        for var in variations:
+            product = await self.opencart.get_product_by_model(var)
+            if product:
+                return product
+                
+        return None
+
+    async def _detect_changes(self, upload_id: str, supplier_name: str, product: ProductData, instruction: str, markup_pct: Optional[float] = None) -> int:
+        """
+        Compare product data with OpenCart and:
+        1. Queue price changes if > 10%
+        2. Sync stock quantity immediately
+        3. Sync stock status (In Stock/Out of Stock) immediately
         """
         changes = 0
         
         try:
-            # Get OpenCart product
-            oc_product = await self.opencart.get_product_by_sku(product.sku)
+            # 1. Try robust SKU/Model match first
+            oc_product = await self._find_existing_product(product.sku)
+            
+            # 2. If no match, try fuzzy name matching using search
+            if not oc_product and product.name:
+                from difflib import SequenceMatcher
+                
+                # Strategy: Try increasingly broad searches to find candidates
+                search_queries = [
+                    product.name,  # Full name
+                    " ".join(product.name.split()[:3]),  # First 3 words
+                    " ".join(product.name.split()[:2]),  # First 2 words
+                    product.name.split()[0],             # First word (Critical for "Zeppelin Wall-mount")
+                    max(product.name.split(), key=len)   # Longest word
+                ]
+                
+                candidates = []
+                seen_ids = set()
+                
+                for query in search_queries:
+                    if len(query) < 3: continue
+                    
+                    results = await self.opencart.search_products_by_name(query)
+                    for res in results:
+                        if res['product_id'] not in seen_ids:
+                            candidates.append(res)
+                            seen_ids.add(res['product_id'])
+                    
+                    # If we found good candidates, stop searching
+                    if len(candidates) > 5:
+                        break
+                
+                # Normalize the incoming product name
+                normalized_new = self._normalize_string(product.name)
+                
+                best_match = None
+                best_ratio = 0.0
+                
+                for oc_prod in candidates:
+                    oc_name = oc_prod.get('name', '')
+                    normalized_oc = self._normalize_string(oc_name)
+                    
+                    # Calculate similarity ratio
+                    ratio = SequenceMatcher(None, normalized_new, normalized_oc).ratio()
+                    
+                    # Boost ratio if SKU is contained in Name (common pattern)
+                    if product.sku and len(product.sku) > 3 and product.sku.lower() in normalized_oc:
+                        ratio += 0.2
+                    
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_match = oc_prod
+                
+                # If >65% similar, consider it a match (lowered from 75%)
+                if best_ratio > 0.65:
+                    logger.info("fuzzy_match_found", 
+                               new_sku=product.sku,
+                               new_name=product.name,
+                               oc_name=best_match.get('name'),
+                               similarity=round(best_ratio * 100, 1))
+                    oc_product = best_match
+            
+            # 3. If still no match, it's genuinely new
             if not oc_product:
-                logger.debug("product_not_in_opencart", sku=product.sku)
+                logger.info("new_product_discovered", sku=product.sku)
+                await self._queue_new_product(supplier_name, product)
                 return 0
+            
+            product_id = oc_product['product_id']
             
             # Get supplier ID from supplier_name
             supplier_response = self.supabase.client.table("suppliers")\
@@ -304,13 +637,16 @@ Extract ALL products - do not skip any rows.
             
             supplier_id = supplier_response.data['id'] if supplier_response.data else None
             
-            # Check price change with pricing rules
+            # --- PRICE CHECKS ---
             if product.price is not None and supplier_id:
-                # Calculate retail price using pricing rules
+                # Calculate retail price using pricing rules AND instruction
                 retail_price = await self.calculate_retail_price(
                     product.price, 
                     supplier_id,
-                    product.name  # Use name as category for now
+                    product.name, # Use name as category for now
+                    instruction,
+                    supplier_name,
+                    markup_pct
                 )
                 
                 current_price = float(oc_product.get('price', 0))
@@ -324,7 +660,7 @@ Extract ALL products - do not skip any rows.
                 # Queue if change > 10%
                 if abs(price_change_pct) > 10.0:
                     self.supabase.client.table("price_change_queue").insert({
-                        "product_id": oc_product['product_id'],
+                        "product_id": product_id,
                         "sku": product.sku,
                         "product_name": product.name,
                         "current_price": current_price,
@@ -336,27 +672,60 @@ Extract ALL products - do not skip any rows.
                     }).execute()
                     changes += 1
             
-            # Check stock change
+            # --- STOCK CHECKS ---
             if product.stock is not None:
                 current_stock = int(oc_product.get('quantity', 0))
+                
                 if product.stock != current_stock:
-                    # Log stock change
-                    self.supabase.client.table("stock_sync_log").insert({
-                        "product_id": oc_product['product_id'],
-                        "sku": product.sku,
-                        "field_name": "quantity",
-                        "old_value": current_stock,
-                        "new_value": product.stock,
-                        "changed_by": "stock_agent",
-                        "change_source": "agent"
-                    }).execute()
-                    changes += 1
+                    # We DO NOT update stock from file anymore (per user request)
+                    # We only log that there is a difference for debugging
+                    logger.debug("stock_mismatch_ignored", 
+                                sku=product.sku, 
+                                file_stock=product.stock, 
+                                oc_stock=current_stock)
         
         except Exception as e:
             logger.error("detect_changes_failed", sku=product.sku, error=str(e))
         
         return changes
     
+    async def _process_discontinued_products(self, supplier_name: str, extracted_skus: set, products: List[ProductData]) -> int:
+        """
+        Identify products present in the database but missing from the current upload.
+        """
+        try:
+            # 1. Get all known SKUs for this supplier from supplier_catalogs
+            # Note: This might be heavy if a supplier has thousands of products.
+            response = self.supabase.client.table("supplier_catalogs")\
+                .select("sku")\
+                .eq("supplier_name", supplier_name)\
+                .execute()
+            
+            if not response.data:
+                return 0
+                
+            existing_skus = {item['sku'] for item in response.data}
+            
+            # 2. Find difference
+            discontinued_skus = existing_skus - extracted_skus
+            
+            if not discontinued_skus:
+                return 0
+                
+            logger.info("discontinued_products_detected", 
+                       supplier=supplier_name, 
+                       count=len(discontinued_skus),
+                       skus=list(discontinued_skus)[:10]) # Log first 10
+            
+            # 3. Mark as discontinued (if we had a status column) or just log
+            # For now, we will just log them as we don't want destructive updates without being sure of schema.
+            
+            return len(discontinued_skus)
+            
+        except Exception as e:
+            logger.error("process_discontinued_failed", error=str(e))
+            return 0
+
     async def _mark_upload_completed(self, upload_id: str, total_rows: int, processed_rows: int):
         """Mark upload as completed."""
         self.supabase.client.table("price_list_uploads").update({

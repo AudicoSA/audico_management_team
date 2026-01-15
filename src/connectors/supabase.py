@@ -478,6 +478,25 @@ class SupabaseConnector:
             logger.error("email_log_status_update_failed", email_id=email_id, error=str(e))
             raise
 
+    async def get_supplier_address(self, name: str) -> Optional[Dict[str, Any]]:
+        """Retrieve supplier address details by supplier name (case-insensitive)."""
+        try:
+            # Try exact match first
+            response = (
+                self.client.table("supplier_addresses")
+                .select("*")
+                .ilike("name", name) # Case-insensitive match
+                .limit(1)
+                .execute()
+            )
+
+            if response.data:
+                return response.data[0]
+            return None
+
+        except Exception as e:
+            logger.error("get_supplier_address_failed", name=name, error=str(e))
+            return None
 
 # Global instance
 _supabase_connector: Optional[SupabaseConnector] = None
