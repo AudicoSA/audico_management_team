@@ -37,6 +37,8 @@ export default function AlignmentPage() {
     const [loading, setLoading] = useState(false)
     const [analyzing, setAnalyzing] = useState(false)
 
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
     // Fetch unmatched products on load
     useEffect(() => {
         fetchUnmatched()
@@ -45,7 +47,7 @@ export default function AlignmentPage() {
     const fetchUnmatched = async () => {
         setLoading(true)
         try {
-            const res = await fetch('http://localhost:8000/api/alignment/unmatched')
+            const res = await fetch(`${API_URL}/api/alignment/unmatched`)
             const data = await res.json()
             setUnmatched(data)
         } catch (error) {
@@ -62,7 +64,7 @@ export default function AlignmentPage() {
 
         try {
             // Assume API endpoint is /api/alignment/candidates/{internal_id}
-            const res = await fetch(`http://localhost:8000/api/alignment/candidates/${product.id}`)
+            const res = await fetch(`${API_URL}/api/alignment/candidates/${product.id}`)
             const data = await res.json()
             setCandidates(data)
         } catch (error) {
@@ -77,7 +79,7 @@ export default function AlignmentPage() {
 
         if (confirm(`Link '${selectedProduct.name}' to '${candidate.product.name}'?`)) {
             try {
-                await fetch('http://localhost:8000/api/alignment/link', {
+                await fetch(`${API_URL}/api/alignment/link`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -104,7 +106,7 @@ export default function AlignmentPage() {
 
         if (confirm(`Ignore '${selectedProduct.name}'? You won't see it again.`)) {
             try {
-                await fetch('http://localhost:8000/api/alignment/ignore', {
+                await fetch(`${API_URL}/api/alignment/ignore`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -133,7 +135,7 @@ export default function AlignmentPage() {
 
         if (confirm(`Send '${selectedProduct.name}' to New Products Queue?`)) {
             try {
-                await fetch('http://localhost:8000/api/alignment/create', {
+                await fetch(`${API_URL}/api/alignment/create`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
