@@ -325,9 +325,12 @@ class StockListingsAgent:
             product = response.data
             
             # 2. Get manufacturer (brand) name
-            supplier_name = product.get('supplier_name')
-            # Try to find manufacturer in OpenCart to get correct casing
-            manufacturer = await self.opencart.get_manufacturer_by_name(supplier_name)
+            # Fix: Do NOT use supplier_name (e.g. Esquire) as Manufacturer.
+            # Instead, try to infer brand from the Product Name (e.g. "Dahua ...")
+            manufacturer = None
+            first_word = product['name'].split(' ')[0] if product.get('name') else ""
+            if first_word and len(first_word) > 2:
+                 manufacturer = await self.opencart.get_manufacturer_by_name(first_word)
             
             # 3. Create product in OpenCart
             
@@ -341,15 +344,12 @@ class StockListingsAgent:
                 # Construct Name: BRAND MODEL - DESCRIPTION
                 product_name_parts = []
                 
-                # 1. Brand/Manufacturer
+                # 1. Brand/Manufacturer - Only add if it's NOT already in the name
                 brand_name = None
                 if manufacturer:
                     brand_name = manufacturer['name']
-                # Removed fallback to use supplier_name as brand (User Request: "never want to see supplier in the product name")
-                # elif supplier_name and "manual" not in supplier_name.lower():
-                #    brand_name = supplier_name
-                
-                if brand_name:
+                    
+                if brand_name and brand_name.lower() not in product['name'].lower():
                     product_name_parts.append(brand_name)
                     
                 # 2. Model (SKU)
