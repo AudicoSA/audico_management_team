@@ -287,6 +287,26 @@ class StockListingsAgent:
         return round(retail_price, 2)
     
 
+    async def process_approval_queue(self):
+        """Process all products in approved_pending status."""
+        try:
+            # Fetch pending
+            response = self.supabase.client.table("new_products_queue")\
+                .select("id")\
+                .eq("status", "approved_pending")\
+                .execute()
+            
+            if not response.data:
+                return
+            
+            logger.info("processing_approval_queue", count=len(response.data))
+            
+            for item in response.data:
+                await self.approve_new_product(item['id'])
+                
+        except Exception as e:
+            logger.error("queue_processing_failed", error=str(e))
+
     async def approve_new_product(self, queue_id: str) -> Dict:
         """
         Approve a product from the queue and create it in OpenCart.
@@ -325,8 +345,9 @@ class StockListingsAgent:
                 brand_name = None
                 if manufacturer:
                     brand_name = manufacturer['name']
-                elif supplier_name and "manual" not in supplier_name.lower():
-                    brand_name = supplier_name
+                # Removed fallback to use supplier_name as brand (User Request: "never want to see supplier in the product name")
+                # elif supplier_name and "manual" not in supplier_name.lower():
+                #    brand_name = supplier_name
                 
                 if brand_name:
                     product_name_parts.append(brand_name)

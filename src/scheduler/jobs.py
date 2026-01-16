@@ -1,6 +1,9 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from src.scheduler.supplier_scanner import SupplierScanner
+from src.agents.stock_agent import StockListingsAgent
+from src.connectors.supabase import get_supabase_connector
+from src.connectors.opencart import OpenCartConnector
 from src.utils.logging import AgentLogger
 
 logger = AgentLogger("APSScheduler")
@@ -16,6 +19,17 @@ async def run_scanner_job(supplier_name: str):
         await scanner_service.run_scan(supplier_name)
     except Exception as e:
         logger.error("scheduled_job_failed", supplier=supplier_name, error=str(e))
+
+async def run_queue_processor_job():
+    """Wrapper to run queue processor."""
+    logger.info("queue_processor_job_started")
+    try:
+        sb = get_supabase_connector()
+        oc = OpenCartConnector()
+        agent = StockListingsAgent(sb, oc)
+        await agent.process_approval_queue()
+    except Exception as e:
+        logger.error("queue_processor_job_failed", error=str(e))
 
 def setup_scheduler():
     """Configure and start the scheduler."""
@@ -37,6 +51,15 @@ def setup_scheduler():
         replace_existing=True
     )
     
+    
+    # Queue Processor: Every minute
+    scheduler.add_job(
+        run_queue_processor_job,
+        CronTrigger(minute="*"),
+        id="process_approval_queue",
+        replace_existing=True
+    )
+
     logger.info("scheduler_jobs_configured")
 
 def start_scheduler():

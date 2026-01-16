@@ -156,18 +156,38 @@ async def create_product(request: CreateRequest):
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        # 2. Insert into new_products_queue
-        # Map fields from products table to queue
+        # 2. Prepare Queue Data
+        # A. Get Supplier Name
+        supplier_name = "Internal-Alignment"
+        if product.get("supplier_id"):
+            sup_res = sb.client.table("suppliers").select("name").eq("id", product.get("supplier_id")).single().execute()
+            if sup_res.data:
+                supplier_name = sup_res.data['name']
+        
+        # B. Construct Better Name
+        # If we have a description, it might be better than the name (often just SKU)
+        # Strategy: If description exists, use it. But prepend Product Name if it looks like a Brand/Model.
+        final_name = product.get("product_name")
+        description = product.get("description")
+        
+        if description and len(description) > len(final_name or ""):
+             # Basic clean up of HTML if present (simple check)
+            if "<" not in description: 
+                final_name = description
+            elif final_name == product.get("sku"):
+                 # If name is just SKU, try to extract text from description? Too risky to parse HTML here.
+                 pass
+
         # User Logic: Round cost price to nearest R10 (floor/no cents)
         raw_price = product.get("cost_price") or product.get("selling_price", 0)
         rounded_price = int(raw_price // 10) * 10
         
         queue_data = {
-            "supplier_name": "Internal-Alignment", # Tag source
+            "supplier_name": supplier_name,
             "sku": product.get("sku"),
-            "name": product.get("product_name"),
+            "name": final_name,
             "cost_price": rounded_price,
-            "stock_level": 0, # Default
+            "stock_level": product.get("total_stock", 0),
             "status": "pending"
         }
         
