@@ -9,4 +9,4 @@ cmds = [
 ]
 
 [start]
-cmd = "LD_LIBRARY_PATH=$(find /nix/store -name libstdc++.so.6 -printf '%h' | head -n 1):$LD_LIBRARY_PATH /opt/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT"
+cmd = "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/nix/store/*-gcc-*-lib/lib /opt/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT"
