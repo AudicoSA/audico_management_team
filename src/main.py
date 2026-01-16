@@ -11,6 +11,8 @@ from src.agents.email_agent import get_email_agent
 from src.agents.orders_agent import get_orders_agent
 from src.utils.config import get_config
 from src.utils.logging import get_logger, setup_logging
+from src.scheduler.jobs import start_scheduler
+
 
 # Setup logging
 setup_logging()
@@ -78,6 +80,10 @@ async def lifespan(app: FastAPI):
     order_poll_task = asyncio.create_task(order_polling_loop())
     logger.info("order_polling_started", interval=1800)
 
+    # Start APScheduler
+    start_scheduler()
+
+
     yield
 
     # Shutdown
@@ -108,8 +114,13 @@ app = FastAPI(
 # Configure CORS for dashboard access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins to fix connectivity issues
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:8000",
+        "*"
+    ],
+    allow_credentials=False, # Disable credentials for now to allow wildcard if needed, or set specific origins
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -118,10 +129,15 @@ app.add_middleware(
 from src.api.mcp_sync import router as mcp_sync_router
 from src.api.stock import router as stock_router
 from src.api.products import router as products_router
+from src.api.scheduler import router as scheduler_router
+from src.api.alignment import router as alignment_router
 
 app.include_router(mcp_sync_router)
 app.include_router(stock_router)
 app.include_router(products_router)
+app.include_router(scheduler_router)
+app.include_router(alignment_router)
+
 
 
 @app.get("/")

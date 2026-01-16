@@ -65,6 +65,12 @@ export default function RootLayout({
                     >
                       🆕 New Products
                     </Link>
+                    <Link
+                      href="/alignment"
+                      className="border-transparent text-gray-500 hover:border-blue-500 hover:text-blue-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors"
+                    >
+                      🔗 Alignment
+                    </Link>
                   </div>
                 </div>
                 <div className="flex items-center">
