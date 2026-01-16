@@ -1,0 +1,32 @@
+{
+  "name": "@audico/mcp-push-opencart",
+  "version": "1.0.0",
+  "description": "MCP Server to push Supabase products to OpenCart with AI-powered deduplication",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "push": "tsx src/push.ts",
+    "test": "tsx src/test.ts"
+  },
+  "keywords": [
+    "mcp",
+    "opencart",
+    "push",
+    "sync",
+    "audico"
+  ],
+  "author": "Audico AI",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.33.0",
+    "@audico/shared": "file:../shared",
+    "axios": "^1.7.9",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -50,8 +50,8 @@ async function runMCPSync(serverKey, sessionId = null) {
         throw new Error(`Unknown server: ${serverKey}`);
     }
 
-    // Fix path to point to audico-mcp-servers directory which is sibling to audico-ai
-    const serverPath = join(__dirname, '..', '..', 'audico-mcp-servers', server.path);
+    // Fix path to point to mcp-servers directory in Monorepo
+    const serverPath = join(__dirname, '..', 'mcp-servers', server.path);
     const syncScriptPath = join(serverPath, 'dist', 'sync.js');
 
     return new Promise((resolve, reject) => {

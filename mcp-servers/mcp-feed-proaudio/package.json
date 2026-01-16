@@ -1,0 +1,25 @@
+{
+  "name": "@audico/mcp-feed-proaudio",
+  "version": "1.0.0",
+  "description": "Pro Audio MCP Server - WordPress REST API + Browser scraping",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node dist/test.js",
+    "sync": "node dist/sync.js"
+  },
+  "keywords": ["mcp", "proaudio", "wordpress", "scraping", "audico"],
+  "author": "Audico",
+  "license": "MIT",
+  "dependencies": {
+    "@audico/shared": "file:../shared",
+    "playwright": "^1.40.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

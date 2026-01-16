@@ -1,0 +1,23 @@
+{
+  "name": "@audico/mcp-feed-connoisseur",
+  "version": "1.0.0",
+  "description": "Connoisseur Shopify product feed MCP server",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "sync": "tsx src/sync.ts",
+    "test": "tsx src/test.ts"
+  },
+  "dependencies": {
+    "@audico/shared": "file:../shared",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

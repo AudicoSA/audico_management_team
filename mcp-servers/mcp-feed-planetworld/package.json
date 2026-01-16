@@ -1,0 +1,38 @@
+{
+  "name": "@audico/mcp-feed-planetworld",
+  "version": "1.0.0",
+  "description": "Planet World MCP Server - Playwright-based web scraping",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node dist/test.js",
+    "sync": "node dist/sync.js",
+    "dev": "ts-node src/index.ts",
+    "test:klipsch": "ts-node test-klipsch-dryrun.ts",
+    "scrape:klipsch": "ts-node scrape-klipsch.ts",
+    "scrape:all": "ts-node scrape-all-products.ts"
+  },
+  "keywords": [
+    "mcp",
+    "planetworld",
+    "scraping",
+    "playwright",
+    "audico"
+  ],
+  "author": "Audico",
+  "license": "MIT",
+  "dependencies": {
+    "@audico/shared": "file:../shared",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "playwright": "^1.40.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  }
+}

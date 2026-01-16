@@ -1,0 +1,34 @@
+{
+  "name": "@audico/mcp-servers",
+  "version": "1.0.0",
+  "description": "Audico MCP servers for supplier integration",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "mcp-feed-nology",
+    "mcp-feed-stock2shop",
+    "mcp-scraper-planet",
+    "mcp-push-opencart"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "npm run dev --workspaces",
+    "test": "npm run test --workspaces",
+    "categorize": "tsx scripts/categorize-products.ts",
+    "categorize:test": "tsx scripts/categorize-products.ts --limit 10",
+    "embed": "tsx scripts/embed-products.ts",
+    "embed:test": "tsx scripts/embed-products.ts --limit 10",
+    "embed:auto": "tsx scripts/embed-products-auto.ts",
+    "load:audiosure": "tsx scripts/load-audiosure-pdfs.ts",
+    "clear:audiosure": "tsx scripts/clear-audiosure-tracking.ts",
+    "fix:audiosure": "tsx scripts/fix-audiosure-names.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "dotenv": "^17.2.3",
+    "tsx": "^4.20.6"
+  }
+}

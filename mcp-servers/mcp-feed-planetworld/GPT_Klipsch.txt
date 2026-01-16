@@ -1,0 +1,173 @@
+Phase 0 — Reproduce + Instrument (today)
+
+Capture what the site is doing
+
+Turn on request logging for all XHR/fetch calls during the browse page load and infinite scroll. Dump: URL, method, payload, response status/length, set-cookie, and any anti-CSRF headers.
+
+In the page, monkey-patch window.fetch and XMLHttpRequest.send to log stack traces + payloads (helps identify the exact JSON endpoint feeding the grid).
+
+Record DOM mutation timing: when does the “NONE” text appear vs. when the product XHRs complete?
+
+Save navigator/Intl/WebGL/AudioContext fingerprints to a JSON blob for this run (and for a real Chrome baseline on your laptop).
+
+Baseline parity run (real Chrome vs Playwright)
+
+Hit the same URL with real desktop Chrome (no extensions), export cookies + storageState.
+
+Compare: request list, headers (esp. sec-ch-ua*, accept-language, priority, referer), and TLS cipher suite JA3 (if your proxy exposes it).
+
+Phase 1 — Quick Wins (lowest effort → highest impact)
+
+These aim to pass as a “normal” user without rewriting the scraper.
+
+Launch real Chrome channel + persistent profile
+
+Use Playwright with channel: 'chrome' and a persistent userDataDir (keeps ServiceWorkers, localStorage, and first-party cookies to build “history”).
+
+Reuse the same profile across runs; add modest slowMo (100–250ms) and random idle delays.
+
+South African residential egress
+
+Run through a ZA residential proxy (rotate on 403/JS challenge only). Avoid datacenter IPs; keep sticky sessions for a few hours.
+
+Full stealth stack
+
+Switch to playwright-extra + puppeteer-extra-plugin-stealth for Chromium channel: chrome (works fine in TS). Keep your current addInitScript for webdriver and window.chrome as a belt-and-braces. 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+Locale & device realism
+
+Ensure timezoneId: 'Africa/Johannesburg', locale: 'en-ZA', accept-language: en-ZA,en;q=0.9, realistic hardwareConcurrency (8) and deviceMemory (8). Use a common 1080p viewport and do not change it mid-session.
+
+Human-ish navigation
+
+Don’t deep-link to the filtered URL first. Start at home → click “Products” → click brand filter → apply category. Add small random mouse moves and scroll cadence jitter. 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+Headful first pass
+
+Run headful once to build up state; save storageState. Then try headless with that state.
+
+Phase 2 — DOM-free Data Path (bypass bot heuristics)
+
+If the grid is fed by a JSON endpoint, scrape that directly with Playwright’s APIRequestContext using the exact headers/cookies captured in Phase 0.
+
+Discover the feed
+
+From your logs, identify the products API (likely returns paged results with manufacturerids=99/categoryids=690).
+
+Reproduce requests with request.get/post and a session cookie from a real Chrome run if needed. (You already suggested session-cookie injection; we’ll formalize it.) 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+Paginate & normalize
+
+Implement cursor/page handling until we collect ~156 items; map to your existing product model and continue with individual product page fetches only if details are missing.
+
+Fallback: server-side rendered alt path
+
+If SPA API is blocked, try server-side category pages without JS (e.g., view-source: analog via page.content()), or try query variants (sort, page size) that sometimes bypass dynamic hydration.
+
+Phase 3 — Hard-mode Fingerprint Alignment
+
+If they still serve “NONE” selectively, assume TLS/JA3 and canvas/audio checks:
+
+TLS/J A3 parity
+
+Prefer Chrome Stable (channel launch) over bundled Chromium to inherit Chrome’s cipher suite ordering. If needed, route through a proxy provider that offers Chrome-like JA3.
+
+Canvas/WebGL/audio
+
+Use stealth plugin’s evasions; additionally, set deterministic but stable seeds per persistent profile for canvas/audio. Avoid per-run randomness (drifts get flagged).
+
+WebDriver residue
+
+Ensure no __playwright globals leak; override permissions.query (notifications), navigator.plugins/mimeTypes, and navigator.connection to plausible values.
+
+Phase 4 — Reliability & Ops
+
+Health checks & canaries
+
+Before full run, do a 5-item sample fetch. If items <5, auto-switch to API path; if that fails, switch to headful + chrome channel; if still failing, alert + keep last good catalog (no destructive updates).
+
+Rotations and backoff
+
+IP rotation only on hard signals (network error/403/challenge). Exponential backoff on product detail requests.
+
+Structured logging you already started
+
+Keep existing debug logs and add:
+
+fingerprint dump, endpoint hit list, and a “path taken” (DOM vs API vs fallback). 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+Deterministic builds
+
+Pin Playwright version and puppeteer-extra-plugin-stealth version; record Chrome channel build number in logs.
+
+Cutover Criteria (same success criteria + guardrails)
+
+Collect ≥156 product links for Klipsch category and hydrate products; works headful and headless; zero manual steps. 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+Concrete “do this now” checklist
+
+ Switch Playwright launch to Chrome channel + persistent profile:
+
+const userDataDir = path.resolve('.pw-profiles/planetworld-za');
+const context = await chromium.launchPersistentContext(userDataDir, {
+  channel: 'chrome',
+  headless: false, // first run headful to build state
+  locale: 'en-ZA',
+  timezoneId: 'Africa/Johannesburg',
+  proxy: process.env.ZA_PROXY ? { server: process.env.ZA_PROXY } : undefined,
+});
+
+
+ Integrate playwright-extra + puppeteer-extra-plugin-stealth (TS compatible) and keep your existing init scripts. 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+ Persist storageState after first successful headful run; reuse on headless.
+
+ Add request/response logger + fetch/XMLHttpRequest monkey-patch (Phase 0) to discover the JSON feed.
+
+ Implement API-first path with the captured headers/cookies; paginate to 156; map to your model.
+
+ Add “navigation path” mode (home → brand → category) with slight human-like timing.
+
+ Gate with canary sample; auto-fallback to API path, then to headful, with alerting.
+
+Answers to your specific questions
+
+Most effective stealth?
+
+Real Chrome channel + persistent profile + residential proxy + stealth plugin. This combo nails browser, storage, and network reputation simultaneously; it consistently beats single-lever tweaks. 
+
+KLIPSCH_BOT_DETECTION_ISSUE
+
+Using playwright-extra with TypeScript?
+
+Yes. Import chromium from playwright-extra, register the stealth plugin, and keep your TS types from playwright. No gotchas beyond ensuring the Chrome channel is available when you also use playwright-extra.
+
+Playwright flags/features to add?
+
+channel: 'chrome', persistent userDataDir, locale/timezone/accept-language alignment, and a sticky proxy. Avoid exotic launch flags; rely on Chrome defaults for “real” fingerprints.
+
+Try Firefox?
+
+Worth a toggle in the fallback chain. Some bot stacks under-fingerprint Firefox. Keep product parsing logic engine-agnostic.
+
+How to test what’s blocking you?
+
+Compare request diffs (headers/cookies/order), inspect feed endpoints, log fingerprint surfaces (canvas/audio/WebGL), and correlate with when “NONE” appears. If network responses differ at the JSON feed, it’s server-side gating (IP/JA3/cookies). If feed is identical but DOM still shows “NONE”, it’s client-side (JS challenge/feature test).
+
+Notes on compliance
+
+Scrape responsibly; abide by their robots/ToS and throttle so we don’t degrade the site. If they provide a public feed or sitemap, prefer that over simulated browsing.
+
+If you want, I can draft the exact TS patches (launch wrapper, logging helper, API path) in one file next.

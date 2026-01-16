@@ -246,9 +246,22 @@ export default function AlignmentPage() {
 
                                 {/* Candidates List */}
                                 <div className="flex-1 overflow-y-auto">
-                                    <h3 className="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-wider">
-                                        {analyzing ? 'Analyzing database...' : `Top Matches Found (${candidates.length})`}
-                                    </h3>
+                                    <div className="flex justify-between items-end mb-4">
+                                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+                                            {analyzing ? 'Analyzing database...' : `Top Matches Found (${candidates.filter(c => c.confidence > 50).length})`}
+                                        </h3>
+
+                                        {/* Quick Create Action - Always Visible */}
+                                        {candidates.length > 0 && (
+                                            <button
+                                                onClick={handleCreate}
+                                                className="text-xs text-emerald-400 hover:text-emerald-300 font-bold flex items-center bg-emerald-900/20 px-3 py-1.5 rounded-lg border border-emerald-500/20 hover:bg-emerald-900/40 transition-all"
+                                            >
+                                                <PlusCircle className="w-3 h-3 mr-1.5" />
+                                                Create New
+                                            </button>
+                                        )}
+                                    </div>
 
                                     {analyzing ? (
                                         <div className="space-y-4">
@@ -256,9 +269,13 @@ export default function AlignmentPage() {
                                                 <div key={i} className="h-24 bg-white/5 rounded-xl animate-pulse" />
                                             ))}
                                         </div>
-                                    ) : candidates.length === 0 ? (
+                                    ) : candidates.filter(c => c.confidence > 50).length === 0 ? (
                                         <div className="text-center py-12">
-                                            <p className="text-slate-400 mb-4">No good matches found in OpenCart.</p>
+                                            <p className="text-slate-400 mb-4">
+                                                {candidates.length > 0
+                                                    ? `${candidates.length} low-confidence matches hidden.`
+                                                    : "No good matches found in OpenCart."}
+                                            </p>
                                             <button
                                                 onClick={handleCreate}
                                                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-medium transition-colors flex items-center mx-auto"
@@ -269,7 +286,7 @@ export default function AlignmentPage() {
                                         </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            {candidates.map((cand, idx) => (
+                                            {candidates.filter(c => c.confidence > 50).map((cand, idx) => (
                                                 <motion.div
                                                     initial={{ opacity: 0, y: 10 }}
                                                     animate={{ opacity: 1, y: 0 }}
@@ -316,6 +333,18 @@ export default function AlignmentPage() {
                                                     </div>
                                                 </motion.div>
                                             ))}
+
+                                            {/* Fallback Create Option */}
+                                            <div className="pt-6 border-t border-white/10 mt-6 text-center">
+                                                <p className="text-sm text-slate-400 mb-3">None of these match?</p>
+                                                <button
+                                                    onClick={handleCreate}
+                                                    className="px-4 py-2 bg-white/5 hover:bg-emerald-600/20 text-slate-300 hover:text-emerald-400 border border-white/10 hover:border-emerald-500/50 rounded-lg text-sm font-medium transition-all flex items-center mx-auto"
+                                                >
+                                                    <PlusCircle className="w-4 h-4 mr-2" />
+                                                    Create '{selectedProduct.name.substring(0, 30)}...' as New
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>

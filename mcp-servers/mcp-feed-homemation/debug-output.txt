@@ -1,0 +1,38 @@
+
+> @audico/mcp-feed-homemation@1.0.0 sync
+> node dist/sync.js --limit=2 --dry-run
+
+🚀 Homemation MCP Server - Sync Tool
+================================
+
+Step 1: Testing connection...
+2025-10-03 10:25:56 [[32minfo[39m]: ℹ️ Skipping login - prices should be publicly visible
+✅ Connected and logged in
+
+Step 2: Checking current status...
+Current products in database: 0
+
+Step 3: Syncing products...
+2025-10-03 10:26:11 [[32minfo[39m]: 🚀 Starting sync for Homemation (Session: 552513ba-7167-40ae-a140-2b34d3a77b14)
+2025-10-03 10:26:11 [[32minfo[39m]: ℹ️ Skipping login - prices should be publicly visible
+2025-10-03 10:26:11 [[32minfo[39m]: 📂 Scraping category 1/5: https://www.homemation.co.za/tv-soundbars
+2025-10-03 10:26:29 [[32minfo[39m]: 🔍 Debug cards found: 0
+2025-10-03 10:26:29 [[33mwarn[39m]: ⚠️ No debug cards collected - first product may have had price
+2025-10-03 10:26:29 [[32minfo[39m]: 📋 Scraped 10 items from category
+2025-10-03 10:26:29 [[32minfo[39m]:   - Denon DHTS216 Soundbar (Black): priceText=""
+2025-10-03 10:26:29 [[32minfo[39m]:   - Denon DHTS218 Soundbar (Black): priceText=""
+2025-10-03 10:26:29 [[32minfo[39m]:   - Denon DHTS216 Soundbar (Black): parsed price=0
+2025-10-03 10:26:29 [[32minfo[39m]:   - Denon DHTS218 Soundbar (Black): parsed price=0
+2025-10-03 10:26:29 [[32minfo[39m]:    └─ Found 10 products (0 with prices)
+2025-10-03 10:26:29 [[32minfo[39m]: ⏳ Homemation: 0/5 products processed
+2025-10-03 10:26:31 [[32minfo[39m]: [DRY RUN] Would upsert: Denon DHTS216 Soundbar (Black) (DHTS216BKE2) ZAR 0
+2025-10-03 10:26:31 [[32minfo[39m]: [DRY RUN] Would upsert: Denon DHTS218 Soundbar (Black) (DHTS218BKE2) ZAR 0
+2025-10-03 10:26:34 [[32minfo[39m]: ✅ Homemation sync completed (Session: 552513ba-7167-40ae-a140-2b34d3a77b14)
+   Added: 0, Updated: 0
+   Duration: 22s
+
+📊 Sync Results:
+Status: ✅ SUCCESS
+Duration: 22s
+Products Added: 0
+Products Updated: 0
