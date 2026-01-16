@@ -50,7 +50,8 @@ async function runMCPSync(serverKey, sessionId = null) {
         throw new Error(`Unknown server: ${serverKey}`);
     }
 
-    const serverPath = join(__dirname, '..', server.path);
+    // Fix path to point to audico-mcp-servers directory which is sibling to audico-ai
+    const serverPath = join(__dirname, '..', '..', 'audico-mcp-servers', server.path);
     const syncScriptPath = join(serverPath, 'dist', 'sync.js');
 
     return new Promise((resolve, reject) => {

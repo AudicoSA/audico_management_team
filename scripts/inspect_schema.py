@@ -4,17 +4,16 @@ from src.connectors.supabase import get_supabase_connector
 async def inspect():
     sb = get_supabase_connector()
     try:
-        # Check columns of products table
-        response = sb.client.table("products").select("*").limit(1).execute()
+        response = sb.client.table('products').select("*").limit(1).execute()
         if response.data:
-            keys = sorted(list(response.data[0].keys()))
-            print(f"Products Columns: {keys}")
-            # print(f"Sample Data: {response.data[0]}")
+            cols = sorted(list(response.data[0].keys()))
+            print(f"Total Columns: {len(cols)}")
+            for c in cols:
+                print(f"- {c}")
+        else:
+             print("Table 'products' exists but is empty.")
     except Exception as e:
-        print(f"Error checking products: {e}")
-            
-    except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error inspecting 'products': {e}")
 
 if __name__ == "__main__":
     asyncio.run(inspect())
