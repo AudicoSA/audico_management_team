@@ -35,7 +35,16 @@ export default function ProductsPage() {
     return (
         <div className="py-10">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <h1 className="text-3xl font-bold text-gray-900 mb-8">Product Management</h1>
+                <div className="flex justify-between items-center mb-8">
+                    <h1 className="text-3xl font-bold text-gray-900">Product Management</h1>
+                    <Link
+                        href="/feeds"
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                        <span className="mr-2">🔌</span>
+                        Manage Feeds
+                    </Link>
+                </div>
 
                 <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-2">
                     {sections.map((section) => (
