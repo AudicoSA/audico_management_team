@@ -1,13 +1,53 @@
-# Last updated: 2025-11-20 17:18 UTC
+# Last updated: 2026-01-17
 [phases.setup]
-nixPkgs = ["python311", "python311Packages.pip", "python311Packages.virtualenv", "gcc", "binutils"]
+nixPkgs = [
+    "python311", 
+    "python311Packages.pip", 
+    "python311Packages.virtualenv", 
+    "nodejs_20",
+    "npm",
+    "gcc", 
+    "binutils",
+    "chromium",
+    "fontconfig",
+    "freetype",
+    "xorg.libX11",
+    "xorg.libxcb",
+    "xorg.libXcomposite",
+    "xorg.libXcursor",
+    "xorg.libXdamage",
+    "xorg.libXext",
+    "xorg.libXfixes",
+    "xorg.libXi",
+    "xorg.libXrender",
+    "xorg.libXtst",
+    "nss",
+    "nspr",
+    "alsa-lib",
+    "cups",
+    "dbus",
+    "expat",
+    "glib",
+    "gtk3",
+    "pango",
+    "at-spi2-core"
+]
 nixLibs = ["stdenv.cc.cc.lib", "zlib"]
 
 [phases.install]
 cmds = [
   "python -m venv /opt/venv",
-  ". /opt/venv/bin/activate && pip install -r requirements.txt"
+  ". /opt/venv/bin/activate && pip install -r requirements.txt",
+  "npm install -g typescript",
+  "cd mcp-http-service && npm install && npm run build",
+  "cd mcp-servers/shared && npm install && npm run build",
+  "cd mcp-servers/mcp-feed-planetworld && npm install && npm run build"
+]
+
+[phases.build]
+cmds = [
+    "echo 'Building application components...'"
 ]
 
 [start]
-cmd = "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/nix/store/*-gcc-*-lib/lib /opt/venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT"
+cmd = "bash start.sh"
