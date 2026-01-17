@@ -24,3 +24,11 @@ browser_profiles/
 headless_shell/
 .cache/
 tmp/
+node_modules/
+
+# Debug and artifacts
+*.png
+*.jpg
+check_table.py
+client_secret_*.json
+dashboard/.next/

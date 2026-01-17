@@ -16,11 +16,12 @@ import {
   SupplierStatus,
   Supplier,
   UnifiedProduct,
-  SupabaseService,
   PricingCalculator,
   logger,
   logSync,
 } from '@audico/shared';
+
+import { PartalSupabaseService } from './supabase_local';
 
 // Add stealth plugin to avoid bot detection
 playwrightChromium.use(StealthPlugin());
@@ -46,7 +47,7 @@ interface PlanetWorldProduct {
 // ============================================
 
 export class PlanetWorldMCPServer implements MCPSupplierTool {
-  private supabase: SupabaseService;
+  private supabase: PartalSupabaseService;
   private supplier: Supplier | null = null;
 
   private config = {
@@ -59,7 +60,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
   };
 
   constructor(supabaseUrl?: string, supabaseKey?: string) {
-    this.supabase = new SupabaseService(supabaseUrl, supabaseKey);
+    this.supabase = new PartalSupabaseService(supabaseUrl, supabaseKey);
   }
 
   // ============================================
@@ -165,7 +166,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       });
 
       // Enable request/response logging to discover JSON API endpoints (Phase 0)
-      const apiRequests: Array<{url: string, method: string, status: number, responseSize: number}> = [];
+      const apiRequests: Array<{ url: string, method: string, status: number, responseSize: number }> = [];
 
       page.on('response', async (response) => {
         const url = response.url();
@@ -258,10 +259,20 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Extract product IDs from the logged API requests
       const productIds = new Set<number>();
       for (const req of apiRequests) {
-        // Parse IDs from Google Analytics tracking calls
-        const idMatch = req.url.match(/productIds=([0-9,]+)/);
-        if (idMatch) {
-          const ids = idMatch[1].split(',').map(id => parseInt(id));
+        // Parse IDs from Google Analytics tracking calls or SEO calls
+        // URL format: .../list?ids=2&ids=4&ids=5...
+        // Regex to find all occurrences of ids=NUMBER
+        const matches = req.url.matchAll(/[?&]ids=([0-9]+)/g);
+        for (const match of matches) {
+          if (match[1]) {
+            productIds.add(parseInt(match[1]));
+          }
+        }
+
+        // Also check for comma separated productIds if that format still exists elsewhere
+        const legacyMatch = req.url.match(/productIds=([0-9,]+)/);
+        if (legacyMatch) {
+          const ids = legacyMatch[1].split(',').map(id => parseInt(id));
           ids.forEach(id => productIds.add(id));
         }
       }
@@ -305,7 +316,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           const unifiedProduct = this.transformToUnified(rawProduct);
 
           if (options?.dryRun) {
-            logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name}`);
+            logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name} (RRP: ${unifiedProduct.retail_price}, Sell: ${unifiedProduct.selling_price}) Stock: ${unifiedProduct.total_stock}`);
             continue;
           }
 
@@ -513,7 +524,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             buttonFound = true;
 
             // Wait for content to load
-            await page.waitForLoadState('networkidle').catch(() => {});
+            await page.waitForLoadState('networkidle').catch(() => { });
             await this.sleep(800);
             break;
           }
@@ -544,81 +555,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       logger.warn('⚠️  Timeout waiting for product links - continuing anyway');
     }
 
-    // DEBUG: Log all links on page to understand structure
-    const debugInfo = await page.evaluate(() => {
-      const allLinks = Array.from(document.querySelectorAll('a[href*="/products/"]'));
-      const withProductId = allLinks.filter((a: any) => a.href.includes('productid='));
-
-      // NEW: Check what's in the product containers
-      const productDivs = Array.from(document.querySelectorAll('div[class*="product"]'));
-      const productDivSamples = productDivs.slice(0, 10).map((div: any) => {
-        const links = Array.from(div.querySelectorAll('a'));
-        return {
-          className: div.className,
-          linkCount: links.length,
-          linkHrefs: links.map((a: any) => a.href).slice(0, 3),
-          innerText: div.innerText?.substring(0, 100)
-        };
-      });
-
-      // Also check for ANY links that might be products (not just /products/)
-      const allHrefs = Array.from(document.querySelectorAll('a[href]'));
-      const possibleProductLinks = allHrefs.filter((a: any) => {
-        const href = a.href;
-        // Look for links that might be product detail pages
-        return !href.includes('/browse/') &&
-               !href.includes('categoryids=') &&
-               (href.includes('productid=') ||
-                href.match(/\/products\/[a-z0-9-]+$/i) ||
-                href.match(/\/product\//i));
-      });
-
-      return {
-        totalLinks: allLinks.length,
-        withProductId: withProductId.length,
-        sampleProductIdHrefs: withProductId.slice(0, 10).map((a: any) => a.href),
-        sampleHrefs: allLinks.slice(0, 20).map((a: any) => a.href),
-        sampleClasses: allLinks.slice(0, 20).map((a: any) => ({
-          href: a.href,
-          className: a.className,
-          parentClass: a.parentElement?.className || '',
-          text: a.textContent?.trim().substring(0, 50) || ''
-        })),
-        productDivSamples,
-        possibleProductLinks: possibleProductLinks.slice(0, 20).map((a: any) => a.href)
-      };
-    });
-
-    logger.info(`🔍 DEBUG: Found ${debugInfo.totalLinks} total links, ${debugInfo.withProductId} with productid parameter`);
-    logger.info(`🔍 DEBUG: Found ${debugInfo.possibleProductLinks.length} possible product links (non-browse)`);
-    logger.info(`🔍 DEBUG: Product container samples (${debugInfo.productDivSamples.length}):`);
-    debugInfo.productDivSamples.forEach((sample, i) => {
-      logger.info(`   ${i + 1}. class="${sample.className}" links=${sample.linkCount}`);
-      if (sample.linkHrefs.length > 0) {
-        sample.linkHrefs.forEach((href: string) => logger.info(`      - ${href}`));
-      }
-      logger.info(`      text: "${sample.innerText}"`);
-    });
-
-    if (debugInfo.possibleProductLinks.length > 0) {
-      logger.info(`🔍 DEBUG: Possible product links found:`);
-      debugInfo.possibleProductLinks.forEach((href, i) => {
-        logger.info(`   ${i + 1}. ${href}`);
-      });
-    }
-
-    if (debugInfo.withProductId > 0) {
-      logger.info(`🔍 DEBUG: Sample productid links:`);
-      debugInfo.sampleProductIdHrefs.forEach((href, i) => {
-        logger.info(`   ${i + 1}. ${href}`);
-      });
-    } else {
-      logger.info(`🔍 DEBUG: No productid links found. Sample ALL /products/ links:`);
-      debugInfo.sampleHrefs.slice(0, 10).forEach((href, i) => {
-        logger.info(`   ${i + 1}. ${href}`);
-      });
-    }
-
     const allLinks = await page.evaluate(() => {
       // IMPORTANT: Exclude left sidebar category filters
       // Target only product cards in the main content area (right side)
@@ -642,7 +578,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           const found = Array.from(document.querySelectorAll(selector));
           if (found.length > 0) {
             links = found;
-            console.log(`Found ${found.length} products using selector: ${selector}`);
             break;
           }
         } catch (e) {
@@ -658,16 +593,11 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           const parent = link.closest('.sidebar, .filter, nav, .navigation, .menu, aside, .categories');
           return !parent; // Only include links NOT inside these containers
         });
-        console.log(`Found ${links.length} products using fallback (excluding sidebar)`);
       }
 
       const uniqueUrls = [...new Set(links.map((a: any) => a.href))];
 
-      // Filter for product detail pages - accept multiple URL patterns:
-      // - /products/category/subcategory/.../product-name (Planet World's actual format)
-      // - /products/product-name
-      // - /products/browse/?productid=123
-      // - /products/?productid=123
+      // Filter for product detail pages
       return uniqueUrls.filter((url: string) => {
         // Exclude category browse pages without productid
         if (url.includes('/products/browse/') && !url.includes('productid=')) {
@@ -675,7 +605,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         }
         // Exclude category pages (only one segment after /products/)
         if (/\/products\/[^\/]+$/.test(url) && !url.includes('productid=')) {
-          // This is a category like /products/auto-audio - skip it
           return false;
         }
         // Include pages with productid param
@@ -683,7 +612,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           return true;
         }
         // Include product detail pages (multiple segments = actual product)
-        // /products/category/.../product-name (must have at least 2 path segments after /products/)
         return /\/products\/[^\/]+\/.+/.test(url);
       });
     });
@@ -726,14 +654,17 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
         const data = await response.json();
 
-        // Parse API response - actual format from Planet World API
-        // [{"ProductId":5430,"Name":"...","Sku":"...","Price":"...","Brand":"...","Url":"...","ImageUrls":[...],"HasStock":"InStock"}]
+        // Parse API response
         if (Array.isArray(data)) {
           for (const item of data) {
+            // Clean price string: "R 12,999.00" -> "12999.00"
+            const priceStr = (item.Price || '').toString().replace(/R/gi, '').replace(/,/g, '').replace(/\s/g, '');
+            const parsedPrice = parseFloat(priceStr);
+
             const product: PlanetWorldProduct = {
               sku: item.Sku || item.ProductId?.toString() || '',
               name: item.Name || '',
-              price: parseFloat(item.Price || '0'),
+              price: !isNaN(parsedPrice) ? parsedPrice : 0,
               category: Array.isArray(item.Categories) ? item.Categories[0] : (item.Category || ''),
               brand: item.Brand || 'Unknown',
               image: Array.isArray(item.ImageUrls) && item.ImageUrls.length > 0 ? item.ImageUrls[0] : '',
@@ -822,17 +753,62 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
           // Price
           let price = 0;
-          const priceSelectors = ['.price', '.product-price', '[data-testid*="price"]'];
+          const priceSelectors = [
+            '.price',
+            '.product-price',
+            '[data-testid*="price"]',
+            '.product-info .price',
+            'span.price',
+            '.amount'
+          ];
 
           for (const selector of priceSelectors) {
             const priceEl = document.querySelector(selector) as any;
             if (priceEl) {
-              const priceText = priceEl.textContent || '';
-              const priceMatch = priceText.match(/R\s*([0-9,]+(?:\.[0-9]{2})?)/);
+              const priceText = priceEl.innerText || priceEl.textContent || '';
+              const cleanText = priceText.replace(/\s/g, '').replace(/,/g, '');
+              const priceMatch = cleanText.match(/R?([0-9]+(?:\.[0-9]{1,2})?)/i);
+
               if (priceMatch) {
-                price = parseFloat(priceMatch[1].replace(/,/g, ''));
-                break;
+                const extracted = parseFloat(priceMatch[1]);
+                if (!isNaN(extracted) && extracted > 0) {
+                  price = extracted;
+                  break;
+                }
               }
+            }
+          }
+
+          // Stock Status - Look for Green Tick (fa-check-circle etc)
+          let inStock = false;
+          // Check for visual indicators as described by user: "Red X (out), Green Tick (in)"
+          // Common icon classes
+          if (document.querySelector('.fa-check') ||
+            document.querySelector('.fa-check-circle') ||
+            document.querySelector('.icon-check') ||
+            document.querySelector('.stock-in') ||
+            document.querySelector('.instock') ||
+            (document.body.innerText.includes('In Stock') && !document.body.innerText.includes('Out of Stock'))) {
+            inStock = true;
+          }
+
+          // Also check specific "product-stock-status" elements
+          const stockEl = document.querySelector('.product-stock-status') || document.querySelector('.stock-status');
+          if (stockEl) {
+            const stockText = stockEl.textContent?.toLowerCase() || '';
+            if (stockText.includes('in stock')) inStock = true;
+            if (stockText.includes('out of stock')) inStock = false;
+          }
+
+          // Check for specific icons if present
+          const icons = Array.from(document.querySelectorAll('i, span[class*="icon"]'));
+          for (const icon of icons) {
+            const cls = icon.className.toLowerCase();
+            if (cls.includes('check') || cls.includes('tick')) {
+              if ((icon as HTMLElement).offsetParent !== null) inStock = true;
+            }
+            if (cls.includes('times') || cls.includes('cross') || cls.includes('x-circle')) {
+              if ((icon as HTMLElement).offsetParent !== null) inStock = false;
             }
           }
 
@@ -861,8 +837,13 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             price,
             image,
             url: productUrl,
+            inStock,
           };
         }, url);
+
+        if (productData.price === 0) {
+          logger.warn(`⚠️  Zero price detected for ${productData.sku} (${url})`);
+        }
 
         if (productData.name && productData.sku) {
           const product: PlanetWorldProduct = {
@@ -873,7 +854,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             brand: productData.brand || this.extractBrand(productData.name),
             image: productData.image,
             productUrl: url,
-            inStock: true,
+            inStock: productData.inStock,
           };
 
           products.push(product);
@@ -899,10 +880,15 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
     // Extract category from name
     const category_name = this.extractCategory(pwProduct);
 
-    // Planet World pricing: Scraped price is RRP (retail), cost is 25% less
-    const retail_price = pwProduct.price; // This is the recommended retail from website
-    const cost_price = retail_price * 0.75; // Cost is 25% less than retail
-    const margin_percentage = 25; // 25% margin
+    // Planet World pricing:
+    // Retail Price (RRP) = Scraped Price
+    // Selling Price = Scraped Price * 0.95 (5% discount)
+    // Cost Price = Scraped Price * 0.70 (30% margin)
+
+    const retail_price = pwProduct.price;
+    const selling_price = parseFloat((retail_price * 0.95).toFixed(2));
+    const cost_price = parseFloat((retail_price * 0.70).toFixed(2));
+    const margin_percentage = 25;
 
     return {
       product_name: pwProduct.name,
@@ -914,11 +900,11 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       cost_price: cost_price,
       retail_price: retail_price,
-      selling_price: retail_price,
+      selling_price: selling_price,
       margin_percentage: margin_percentage,
 
-      total_stock: pwProduct.inStock ? 10 : 0, // Default stock
-      stock_jhb: pwProduct.inStock ? 10 : 0,
+      total_stock: pwProduct.inStock ? 5 : 0, // Stock Level 5 as requested for "In Stock"
+      stock_jhb: pwProduct.inStock ? 5 : 0,
       stock_cpt: 0,
       stock_dbn: 0,
 
