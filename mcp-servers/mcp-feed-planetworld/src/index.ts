@@ -16,6 +16,8 @@ try {
   console.log('DEBUG: Playwright loaded successfully');
 } catch (error) {
   console.error('CRITICAL: Failed to load playwright module:', error);
+  // Don't set to undefined - let it remain undefined so we can check later
+  // This will cause the scraper to fail loudly when trying to use it
 }
 import * as path from 'path';
 import * as fs from 'fs';
@@ -139,6 +141,33 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       );
 
       logSync.start('Planet World', sessionId);
+
+      // PRE-FLIGHT CHECK: Verify Playwright is available before attempting to launch browser
+      if (!playwrightChromium) {
+        const error = new Error(
+          'Playwright browser automation is not available. ' +
+          'This usually means Playwright was not installed correctly in the deployment environment. ' +
+          'Check that "playwright install chromium" ran successfully during build.'
+        );
+
+        // Log crash with detailed context
+        await this.supabase.logCrash({
+          supplierName: 'Planet World',
+          errorType: 'playwright_unavailable',
+          errorMessage: error.message,
+          stackTrace: error.stack,
+          context: {
+            nodeVersion: process.version,
+            platform: process.platform,
+            arch: process.arch,
+            env: process.env.NODE_ENV,
+            playwrightBrowsersPath: process.env.PLAYWRIGHT_BROWSERS_PATH,
+            cwd: process.cwd()
+          }
+        });
+
+        throw error; // Fail loudly instead of silently
+      }
 
       // Use persistent profile with Chrome channel for better bot evasion
       const userDataDir = path.resolve('.pw-profiles/planetworld-za');

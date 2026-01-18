@@ -71,6 +71,14 @@ export interface MCPSupplierTool {
     getSupplierInfo(): Promise<Supplier>;
 }
 
+export interface CrashLog {
+    supplier_name: string;
+    error_type: string;
+    error_message: string;
+    stack_trace?: string;
+    context?: Record<string, any>;
+}
+
 export class PricingCalculator {
     static calculate(cost: number, markup: number): number {
         return cost * (1 + markup / 100);

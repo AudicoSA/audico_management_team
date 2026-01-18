@@ -109,4 +109,34 @@ export class PartalSupabaseService {
         if (error) throw error;
         return count || 0;
     }
+
+    async logCrash(params: {
+        supplierName: string;
+        errorType: string;
+        errorMessage: string;
+        stackTrace?: string;
+        context?: any;
+    }): Promise<void> {
+        try {
+            // Log to console for immediate visibility
+            logger.error(`💥 CRASH: ${params.supplierName} - ${params.errorType}: ${params.errorMessage}`);
+
+            // Insert crash log into database
+            const { error } = await this.client.from('mcp_crash_log').insert({
+                supplier_name: params.supplierName,
+                error_type: params.errorType,
+                error_message: params.errorMessage,
+                stack_trace: params.stackTrace,
+                context: params.context
+            });
+
+            if (error) {
+                // Don't throw - we don't want crash logging to crash the app
+                logger.error(`Failed to log crash to database: ${error.message}`);
+            }
+        } catch (err) {
+            // Defensive: never let crash logging itself crash
+            logger.error(`Crash logging failed: ${err}`);
+        }
+    }
 }

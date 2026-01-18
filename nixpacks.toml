@@ -41,7 +41,7 @@ cmds = [
   "npm install -g typescript",
   "cd mcp-http-service && npm install",
   "cd mcp-servers/shared && npm install && npm run build",
-  "cd mcp-servers/mcp-feed-planetworld && npm install && export PLAYWRIGHT_BROWSERS_PATH=0 && chmod +x ./node_modules/.bin/playwright && ./node_modules/.bin/playwright install chromium && npm run build"
+  "cd mcp-servers/mcp-feed-planetworld && npm install && export PLAYWRIGHT_BROWSERS_PATH=0 && chmod +x ./node_modules/.bin/playwright && ./node_modules/.bin/playwright install chromium --with-deps && ./node_modules/.bin/playwright --version && npm run build"
 ]
 
 [phases.build]
