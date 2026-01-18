@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import dotenv from 'dotenv';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -61,14 +62,24 @@ async function runMCPSync(serverKey, sessionId = null) {
         let stderr = '';
 
         // DEBUG: Read the file content to verify deployment
+        // DEBUG: Read the file content to verify deployment
         try {
-            const fs = require('fs');
             if (fs.existsSync(syncScriptPath)) {
                 const content = fs.readFileSync(syncScriptPath, 'utf8');
                 console.log(`[${server.name}] Script preview:\n${content.slice(0, 300)}`);
                 stdout += `\n--- SCRIPT PREVIEW ---\n${content.slice(0, 300)}\n----------------------\n`;
+                // Add file stats for good measure
+                const stats = fs.statSync(syncScriptPath);
+                stdout += `\nFile size: ${stats.size} bytes\nLast modified: ${stats.mtime}\n`;
             } else {
                 stdout += `\nERROR: Script file not found at ${syncScriptPath}\n`;
+                // List directory to see what IS there
+                try {
+                    const dirContent = fs.readdirSync(dirname(syncScriptPath));
+                    stdout += `\nContents of ${dirname(syncScriptPath)}:\n${dirContent.join('\n')}\n`;
+                } catch (e) {
+                    stdout += `\nFailed to list directory: ${e.message}\n`;
+                }
             }
         } catch (err) {
             console.error(`[${server.name}] Failed to read script:`, err);
