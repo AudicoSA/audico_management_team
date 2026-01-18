@@ -9,7 +9,7 @@ python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 &
 
 # Start MCP HTTP Service (Node.js) in background
 echo "🚀 Starting MCP Service..."
-cd mcp-http-service && node dist/index.js &
+cd mcp-http-service && npm start &
 
 # Wait for any process to exit
 wait -n

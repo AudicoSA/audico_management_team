@@ -39,7 +39,7 @@ cmds = [
   "python -m venv /opt/venv",
   ". /opt/venv/bin/activate && pip install -r requirements.txt",
   "npm install -g typescript",
-  "cd mcp-http-service && npm install && npm run build",
+  "cd mcp-http-service && npm install",
   "cd mcp-servers/shared && npm install && npm run build",
   "cd mcp-servers/mcp-feed-planetworld && npm install && npm run build"
 ]
