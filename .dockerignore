@@ -1,0 +1,29 @@
+# Exclude dependency directories
+node_modules
+**/node_modules
+dist
+**/dist
+
+# Exclude git
+.git
+.gitignore
+
+# Exclude env files (Railway handles secrets)
+.env
+.env.*
+
+# Exclude logs
+*.log
+logs
+**/logs
+
+# Exclude builds and temporaries
+.nixpacks
+.cache
+__pycache__
+**/*.pyc
+.DS_Store
+Thumbs.db
+
+# Exclude specific heavy artifacts if any
+debug-*.png
