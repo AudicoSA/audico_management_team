@@ -60,6 +60,17 @@ async function runMCPSync(serverKey, sessionId = null) {
         let stdout = '';
         let stderr = '';
 
+        // DEBUG: Read the file content to verify deployment
+        try {
+            const fs = await import('fs');
+            const content = fs.readFileSync(syncScriptPath, 'utf8');
+            console.log(`[${server.name}] Script preview:\n${content.slice(0, 300)}`);
+            stdout += `\n--- SCRIPT PREVIEW ---\n${content.slice(0, 300)}\n----------------------\n`;
+        } catch (err) {
+            console.error(`[${server.name}] Failed to read script:`, err);
+            stdout += `\nFailed to read script: ${err.message}\n`;
+        }
+
         console.log(`[${server.name}] Starting sync: node ${syncScriptPath}`);
 
         // Execute node directly without shell
