@@ -123,6 +123,11 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
     const startTime = Date.now();
     let sessionId = '';
     let context: BrowserContext | null = null;
+    let productsAdded = 0;
+    let productsUpdated = 0;
+    let productsUnchanged = 0;
+    const errors: string[] = [];
+    const warnings: string[] = [];
 
     try {
       // Get supplier record
@@ -142,559 +147,122 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       logSync.start('Planet World', sessionId);
 
-      // PRE-FLIGHT CHECK: Verify Playwright is available before attempting to launch browser
+      // PRE-FLIGHT CHECK
       if (!playwrightChromium) {
-        const error = new Error(
-          'Playwright browser automation is not available. ' +
-          'This usually means Playwright was not installed correctly in the deployment environment. ' +
-          'Check that "playwright install chromium" ran successfully during build.'
-        );
-
-        // Log crash with detailed context
-        await this.supabase.logCrash({
-          supplierName: 'Planet World',
-          errorType: 'playwright_unavailable',
-          errorMessage: error.message,
-          stackTrace: error.stack,
-          context: {
-            nodeVersion: process.version,
-            platform: process.platform,
-            arch: process.arch,
-            env: process.env.NODE_ENV,
-            playwrightBrowsersPath: process.env.PLAYWRIGHT_BROWSERS_PATH,
-            cwd: process.cwd()
-          }
-        });
-
-        throw error; // Fail loudly instead of silently
+        throw new Error('Playwright browser automation is not available.');
       }
 
-      // Use persistent profile with Chrome channel for better bot evasion
+      // Use persistent profile
       const userDataDir = path.resolve('.pw-profiles/planetworld-za');
-
-      // Ensure profile directory exists
       if (!fs.existsSync(userDataDir)) {
         fs.mkdirSync(userDataDir, { recursive: true });
-        logger.info('📁 Created persistent browser profile directory');
       }
 
-      // Launch with persistent context (Chrome channel + saved state)
       context = await playwrightChromium.launchPersistentContext(userDataDir, {
-        // Use system chromium on Railway/Nix environments where it's pre-installed with all deps
         executablePath: process.env.CHROMIUM_PATH || undefined,
         headless: this.config.headless,
-        locale: 'en-ZA', // South African English
-        timezoneId: 'Africa/Johannesburg', // SA timezone
+        locale: 'en-ZA',
+        timezoneId: 'Africa/Johannesburg',
         viewport: { width: 1920, height: 1080 },
         userAgent: this.config.userAgent,
-        acceptDownloads: false,
-        // South African proxy if configured
-        proxy: process.env.ZA_PROXY ? { server: process.env.ZA_PROXY } : undefined,
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-        ],
+        args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage'],
       });
 
-      if (!context) {
-        throw new Error('Failed to launch browser context');
-      }
+      if (!context) throw new Error('Failed to launch browser context');
 
       const page = context.pages()[0] || await context.newPage();
 
-      // Additional stealth init script (belt-and-braces with stealth plugin)
-      await page.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        (window as any).chrome = { runtime: {} };
-      });
+      // Pagination Loop
+      let pageNum = 1;
+      let hasMoreProducts = true;
+      const maxPages = 100; // Safety limit
+      const limit = options?.limit || 10000;
 
-      // Enable request/response logging to discover JSON API endpoints
-      // Track both URLs and response bodies to capture all product IDs
-      const apiRequests: Array<{ url: string, method: string, status: number, responseSize: number, body?: string }> = [];
-      const productIds = new Set<number>();
+      logger.info('🚀 Starting paginated scrape...');
 
-      page.on('response', async (response) => {
-        const url = response.url();
-        const contentType = response.headers()['content-type'] || '';
-        // Log all XHR/fetch API calls - be more inclusive to catch product data
-        // Include any JSON response or API-like URL from planetworld
-        const isJsonResponse = contentType.includes('application/json');
-        const isApiLikeUrl = url.includes('planetworld.co.za') && (
-          url.includes('.json') ||
-          url.includes('api') ||
-          url.includes('productid') ||
-          url.includes('search') ||
-          url.includes('browse') ||
-          url.includes('seo-product') ||
-          url.includes('product') ||
-          url.includes('catalog') ||
-          url.includes('list') ||
-          url.includes('load') ||
-          url.includes('fetch') ||
-          url.includes('get')
-        );
-        if (url.includes('planetworld.co.za') && (isJsonResponse || isApiLikeUrl)) {
-          try {
-            const body = await response.text();
-            apiRequests.push({
-              url,
-              method: response.request().method(),
-              status: response.status(),
-              responseSize: body.length,
-              body: body.length < 500000 ? body : undefined, // Store body if reasonable size
-            });
-            
-            // Parse product IDs from URL
-            const urlMatches = url.matchAll(/[?&]ids=([0-9]+)/g);
-            for (const match of urlMatches) {
-              if (match[1]) {
-                productIds.add(parseInt(match[1]));
-              }
-            }
-
-            // Also parse product IDs from response body (JSON array of products)
-            if (body.length > 0 && body.length < 500000 && body.trim().startsWith('[')) {
-              try {
-                const jsonData = JSON.parse(body);
-                if (Array.isArray(jsonData)) {
-                  for (const item of jsonData) {
-                    if (item.ProductId) {
-                      productIds.add(parseInt(item.ProductId));
-                    }
-                    if (item.id) {
-                      productIds.add(parseInt(item.id));
-                    }
-                  }
-                }
-              } catch (e) {
-                // Not JSON or parse failed, continue
-              }
-            }
-
-            // Log more details including content type for debugging
-            const shortUrl = url.length > 100 ? url.substring(0, 100) + '...' : url;
-            logger.info(`🌐 API [${contentType.split(';')[0]}]: ${response.request().method()} ${shortUrl} → ${response.status()} (${body.length} bytes, ${productIds.size} IDs)`);
-          } catch (e) {
-            // Ignore binary/image responses
-          }
+      while (hasMoreProducts && pageNum <= maxPages) {
+        if ((productsAdded + productsUpdated) >= limit) {
+          logger.info(`🛑 Reached limit of ${limit} products`);
+          break;
         }
-      });
 
-      const fullUrl = `${this.config.baseUrl}${this.config.productsUrl}`;
-      logger.info(`📄 Loading Planet World products page: ${fullUrl}`);
-      await page.goto(fullUrl, {
-        waitUntil: 'networkidle', // Wait for AJAX/JS to finish loading products
-        timeout: 30000,
-      });
-
-      // Extra wait for dynamic content to render
-      await page.waitForTimeout(2000);
-
-      // Dismiss popups
-      await this.dismissPopups(page);
-
-      // STRATEGY: Since load-more gets 403, iterate through manufacturer filters
-      // Each manufacturer has a smaller product set that may be fully visible
-      logger.info('🏭 Extracting manufacturer IDs for pagination strategy...');
-      const manufacturerIds = await page.evaluate(() => {
-        const ids = new Set<string>();
-        // Find all links with manufacturerids parameter
-        const links = document.querySelectorAll('a[href*="manufacturerids="]');
-        links.forEach((link: any) => {
-          const href = link.href || '';
-          const match = href.match(/manufacturerids=(\d+)/);
-          if (match && match[1]) {
-            ids.add(match[1]);
-          }
-        });
-        return Array.from(ids);
-      });
-      logger.info(`📋 Found ${manufacturerIds.length} manufacturers to iterate`);
-
-      // Collect products from each manufacturer page
-      const allProductUrls = new Set<string>();
-      const categoryId = '690'; // Main category with all products
-
-      // First, collect from the main page (initial load)
-      const initialUrls = await this.collectProductLinksFromCurrentPage(page);
-      initialUrls.forEach(url => allProductUrls.add(url));
-      logger.info(`📦 Initial page: ${initialUrls.length} products (${allProductUrls.size} total)`);
-
-      // Then iterate through each manufacturer
-      for (let i = 0; i < manufacturerIds.length; i++) {
-        const manufacturerId = manufacturerIds[i];
-        const filterUrl = `${this.config.baseUrl}${this.config.productsUrl}?categoryids=${categoryId}&manufacturerids=${manufacturerId}`;
+        const pageUrl = `${this.config.baseUrl}${this.config.productsUrl}?page=${pageNum}`;
+        logger.info(`📄 Scraping Page ${pageNum}: ${pageUrl}`);
 
         try {
-          logger.info(`🏭 [${i + 1}/${manufacturerIds.length}] Loading manufacturer ${manufacturerId}...`);
-          await page.goto(filterUrl, { waitUntil: 'networkidle', timeout: 20000 });
-          await page.waitForTimeout(1500);
-
-          // Do some scrolling to load more products if any
-          await this.infiniteScroll(page, 10);
-
-          // Collect product URLs from this filtered view
-          const urls = await this.collectProductLinksFromCurrentPage(page);
-          urls.forEach(url => allProductUrls.add(url));
-
-          if ((i + 1) % 10 === 0 || i === manufacturerIds.length - 1) {
-            logger.info(`📦 After ${i + 1} manufacturers: ${allProductUrls.size} unique products`);
+          await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          // Wait for product grid
+          try {
+            await page.waitForSelector('a[href*="/products/"]', { timeout: 5000 });
+          } catch (e) {
+            // If timeout, might be empty page
           }
 
-          // Small delay between requests
-          await this.sleep(500);
-        } catch (e: any) {
-          logger.warn(`⚠️ Failed to load manufacturer ${manufacturerId}: ${e.message}`);
-        }
-      }
+          const productLinks = await this.collectProductLinks(page, limit);
 
-      logger.info(`✅ Manufacturer iteration complete: ${allProductUrls.size} unique product URLs`);
+          if (productLinks.length === 0) {
+            logger.info(`✅ No products found on page ${pageNum}. Reached end of catalog.`);
+            hasMoreProducts = false;
+            break;
+          }
 
-      // Convert URLs to product links for further processing
-      const productLinksFromManufacturers = Array.from(allProductUrls);
+          logger.info(`🔍 Page ${pageNum}: Found ${productLinks.length} products`);
 
-      // Also do standard scroll/load-more on main page as backup
-      await page.goto(fullUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      await page.waitForTimeout(2000);
+          // Scrape details for this page
+          const products = await this.scrapeProductDetails(page, productLinks, options?.dryRun);
 
-      // Use infinite scroll to load all products
-      // Scroll more aggressively to ensure all products are loaded via API calls
-      const maxScrolls = Math.max(30, options?.limit ? Math.ceil(options.limit / 3) : 100);
-      logger.info(`📜 Starting infinite scroll (max ${maxScrolls} scrolls)...`);
-      const totalScrolls = await this.infiniteScroll(page, maxScrolls);
-      logger.info(`✅ Completed ${totalScrolls} scrolls`);
+          if (products.length === 0) {
+            logger.warn(`⚠️ Page ${pageNum} had links but scraping details returned 0 products.`);
+            // Don't confirm end of catalog yet, maybe just a partial fail?
+            // But if consecutive failures, maybe stop?
+            // For now, continue to next page.
+          }
 
-      // Try clicking Load More buttons (some pages have both)
-      // Increase max clicks to ensure we capture all products
-      const totalClicks = await this.clickLoadMoreButtons(page, 50);
-      if (totalClicks > 0) {
-        logger.info(`✅ Also clicked ${totalClicks} Load More buttons`);
-      }
+          // Upsert batch
+          for (const rawProduct of products) {
+            try {
+              const unifiedProduct = this.transformToUnified(rawProduct);
 
-      // DEBUG: Take screenshot and inspect page structure
-      if (options?.dryRun) {
-        await page.screenshot({ path: 'debug-klipsch-page.png', fullPage: true });
-        logger.info(`📸 Screenshot saved to debug-klipsch-page.png`);
-      }
-
-      // Extract product IDs from API calls (already collected in response listener above)
-      logger.info('🔍 Extracting product IDs from API calls...');
-      
-      // Wait a bit more to ensure all API responses are captured (especially from Load More clicks)
-      await this.sleep(3000);
-
-      // DIRECT PAGINATION: Use page context to fetch all pages (avoids 403 from Load More)
-      // The /products/load-more endpoint requires categoryids parameter extracted from the page
-      logger.info('🔍 Attempting direct pagination using browser context...');
-      try {
-        // First, extract the categoryids and other filter params from the current page
-        const pageFilterParams = await page.evaluate(() => {
-          // Try to find categoryids from hidden input or data attribute
-          const categoryInput = document.querySelector('input[name="categoryids"], input[name="CategoryIds"]') as HTMLInputElement;
-          const categoryIds = categoryInput?.value || '';
-
-          // Also check URL parameters
-          const urlParams = new URLSearchParams(window.location.search);
-          const urlCategoryIds = urlParams.get('categoryids') || urlParams.get('CategoryIds') || '';
-
-          // Check for the load-more button's data
-          const loadMoreBtn = document.querySelector('.load-more-button, [data-load-more], .btn-load-more, button[onclick*="loadMore"]');
-
-          // Get all category IDs from filter links on the page (these are the available categories)
-          const categoryLinks = document.querySelectorAll('a[href*="categoryids="]');
-          const allCategoryIds = new Set<string>();
-          categoryLinks.forEach((link: any) => {
-            const href = link.href || '';
-            const match = href.match(/categoryids=([^&]+)/);
-            if (match && match[1]) {
-              match[1].split(',').forEach((id: string) => allCategoryIds.add(id));
-            }
-          });
-
-          // Get the page's current product count to estimate total pages
-          const totalText = document.querySelector('.product-count, .results-count, .total-products')?.textContent || '';
-          const totalMatch = totalText.match(/(\d[\d,]*)/);
-          const totalProducts = totalMatch ? parseInt(totalMatch[1].replace(',', '')) : 1853;
-
-          return {
-            categoryIds: categoryIds || urlCategoryIds || Array.from(allCategoryIds).join(',') || '690',
-            totalProducts
-          };
-        });
-
-        logger.info(`📋 Filter params: categoryIds=${pageFilterParams.categoryIds}, totalProducts=${pageFilterParams.totalProducts}`);
-
-        const totalPages = Math.ceil(pageFilterParams.totalProducts / 16);
-        const maxPages = Math.min(totalPages, 120); // Cap at 120 pages
-
-        for (let pageNum = 2; pageNum <= maxPages; pageNum++) {
-          try {
-            // Use page.evaluate to make AJAX call with proper cookies/session AND categoryids
-            const pageProducts = await page.evaluate(async (params: { pageNum: number; categoryIds: string }) => {
-              // Build the URL with categoryids to match what the real Load More button does
-              const url = `/products/load-more?categoryids=${params.categoryIds}&page=${params.pageNum}&sortBy=Default`;
-
-              const response = await fetch(url, {
-                method: 'GET',
-                credentials: 'include',
-                headers: {
-                  'Accept': 'text/html, */*; q=0.01',
-                  'X-Requested-With': 'XMLHttpRequest',
-                }
-              });
-
-              if (!response.ok) {
-                return { error: response.status, html: '', url };
-              }
-
-              const html = await response.text();
-              // Extract product IDs from the HTML response
-              const ids: number[] = [];
-
-              // Try data-id attribute (common in product cards)
-              const idMatches = html.matchAll(/data-id="(\d+)"/g);
-              for (const match of idMatches) {
-                if (match[1]) ids.push(parseInt(match[1]));
-              }
-
-              // Try productid in URLs
-              const urlMatches = html.matchAll(/productid=(\d+)/gi);
-              for (const match of urlMatches) {
-                if (match[1]) ids.push(parseInt(match[1]));
-              }
-
-              // Try data-product-id attribute
-              const prodIdMatches = html.matchAll(/data-product-id="(\d+)"/g);
-              for (const match of prodIdMatches) {
-                if (match[1]) ids.push(parseInt(match[1]));
-              }
-
-              // Try ID in product card divs (e.g., id="product-123")
-              const divIdMatches = html.matchAll(/id="product-(\d+)"/g);
-              for (const match of divIdMatches) {
-                if (match[1]) ids.push(parseInt(match[1]));
-              }
-
-              return { error: null, ids, count: ids.length, htmlLength: html.length, url };
-            }, { pageNum, categoryIds: pageFilterParams.categoryIds });
-
-            if (pageProducts.error) {
-              if (pageProducts.error === 403) {
-                logger.warn(`⚠️ Page ${pageNum} returned 403 (${pageProducts.url}) - site may be blocking requests`);
-                // Try a small delay and continue
-                await this.sleep(2000);
+              if (options?.dryRun) {
+                logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name}`);
                 continue;
               }
-              logger.warn(`⚠️ Page ${pageNum} returned error ${pageProducts.error}`);
-              break;
-            }
 
-            if (pageProducts.ids && pageProducts.ids.length > 0) {
-              for (const id of pageProducts.ids) {
-                productIds.add(id);
-              }
-              if (pageNum % 10 === 0 || pageNum === 2) {
-                logger.info(`📄 Page ${pageNum}: Found ${pageProducts.count} products (${productIds.size} total IDs, html=${pageProducts.htmlLength} bytes)`);
-              }
-            } else {
-              // No more products - log why
-              logger.info(`📄 Page ${pageNum}: No products found (html=${pageProducts.htmlLength} bytes), stopping pagination`);
-              break;
-            }
+              const result = await this.supabase.upsertProduct(unifiedProduct);
+              if (result.isNew) productsAdded++;
+              else productsUpdated++;
 
-            // Small delay to avoid rate limiting
-            await this.sleep(300);
-          } catch (e: any) {
-            logger.warn(`⚠️ Error fetching page ${pageNum}: ${e.message || e}, continuing...`);
-          }
-        }
-        logger.info(`✅ Direct pagination complete: ${productIds.size} total product IDs`);
-      } catch (e: any) {
-        logger.info(`ℹ️ Direct pagination failed: ${e.message || e}, falling back to captured data`);
-      }
-      
-      // Log details about captured API requests
-      const apiCallsWithProducts = apiRequests.filter(req => req.body && req.body.includes('ProductId'));
-      logger.info(`📊 API Summary: ${apiRequests.length} total requests, ${apiCallsWithProducts.length} with product data`);
-      
-      if (apiCallsWithProducts.length > 0) {
-        // Parse any missed product IDs from stored response bodies
-        for (const req of apiCallsWithProducts) {
-          if (req.body && req.body.trim().startsWith('[')) {
-            try {
-              const jsonData = JSON.parse(req.body);
-              if (Array.isArray(jsonData)) {
-                for (const item of jsonData) {
-                  if (item.ProductId) productIds.add(parseInt(item.ProductId));
-                  if (item.id) productIds.add(parseInt(item.id));
-                }
-              }
-            } catch (e) {
-              // Parse failed, continue
+            } catch (error: any) {
+              const errorMsg = `Failed to process ${rawProduct.sku}: ${error.message}`;
+              errors.push(errorMsg);
+              logger.error(errorMsg);
             }
           }
-        }
-      }
-      
-      // Also extract product IDs directly from DOM (data attributes, hidden inputs, etc.)
-      logger.info('🔍 Extracting product IDs from DOM elements...');
-      const domProductIds = await page.evaluate(() => {
-        const ids = new Set<number>();
-        
-        // Check for data-product-id, data-id, data-productid attributes
-        const productElements = document.querySelectorAll('[data-product-id], [data-id], [data-productid], [data-product-id], .product-item, .product-card');
-        productElements.forEach((el: any) => {
-          const id = el.getAttribute('data-product-id') || el.getAttribute('data-id') || el.getAttribute('data-productid');
-          if (id) {
-            const numId = parseInt(id);
-            if (!isNaN(numId)) ids.add(numId);
+
+          if (products.length > 0) {
+            // Only increment log progress if we actually found stuff
+            logSync.progress('Planet World', productsAdded + productsUpdated, 'unknown');
           }
-        });
-        
-        // Check for product IDs in href parameters
-        const links = document.querySelectorAll('a[href*="productid="], a[href*="/products/"]');
-        links.forEach((link: any) => {
-          const href = link.href;
-          // Extract from ?productid=123
-          const productIdMatch = href.match(/[?&]productid=(\d+)/);
-          if (productIdMatch && productIdMatch[1]) {
-            ids.add(parseInt(productIdMatch[1]));
-          }
-          // Extract from /products/.../product-slug format (might have ID in data)
-          const parent = link.closest('[data-product-id], [data-id]');
-          if (parent) {
-            const id = (parent as any).getAttribute('data-product-id') || (parent as any).getAttribute('data-id');
-            if (id) {
-              const numId = parseInt(id);
-              if (!isNaN(numId)) ids.add(numId);
-            }
-          }
-        });
-        
-        // Check for hidden input fields with product IDs
-        const hiddenInputs = document.querySelectorAll('input[type="hidden"][name*="product"], input[type="hidden"][name*="id"]');
-        hiddenInputs.forEach((input: any) => {
-          const value = input.value;
-          if (value && /^\d+$/.test(value)) {
-            ids.add(parseInt(value));
-          }
-        });
-        
-        return Array.from(ids);
-      });
-      
-      domProductIds.forEach(id => productIds.add(id));
-      logger.info(`📋 Found ${domProductIds.length} product IDs from DOM (${productIds.size} total from all sources)`);
-      
-      logger.info(`✅ Found ${productIds.size} product IDs from API tracking (${apiRequests.length} API requests captured)`);
-      
-      // Debug: Show some sample product IDs if we have them
-      if (productIds.size > 0 && productIds.size <= 50) {
-        const sampleIds = Array.from(productIds).slice(0, 10);
-        logger.info(`📋 Sample Product IDs: ${sampleIds.join(', ')}`);
-      }
 
-      // Collect DOM links to compare
-      const productLinks = await this.collectProductLinks(page, options?.limit || 10000);
-      logger.info(`🔍 Found ${productLinks.length} product links via DOM`);
+          pageNum++;
+          // Small delay between pages
+          await this.sleep(1000);
 
-      // Merge product links from manufacturer iteration with DOM links
-      // productLinksFromManufacturers was populated earlier during manufacturer iteration
-      const allUniqueProductLinks = new Set<string>([...productLinksFromManufacturers, ...productLinks]);
-      logger.info(`📊 Total unique product links: ${allUniqueProductLinks.size} (${productLinksFromManufacturers.length} from manufacturers, ${productLinks.length} from DOM)`);
-
-      // Decision Logic: Use API if it captured a significant number of products (or more than DOM),
-      // otherwise fallback to DOM if API missed them (e.g. Load More didn't trigger API logs correctly).
-      let products: PlanetWorldProduct[] = [];
-      let apiProducts: PlanetWorldProduct[] = [];
-      const apiCount = productIds.size;
-      const domCount = allUniqueProductLinks.size; // Use merged count
-
-
-      // Always fetch API products first as a backup (if IDs exist)
-      if (apiCount > 0) {
-        try {
-          apiProducts = await this.fetchProductsViaAPI(Array.from(productIds), options?.dryRun);
-        } catch (e) {
-          logger.warn('⚠️ Failed to fetch backup API products');
+        } catch (e: any) {
+          logger.error(`❌ Error scraping page ${pageNum}: ${e.message}`);
+          warnings.push(`Page ${pageNum} failed: ${e.message}`);
+          // Continue to next page? Or stop?
+          // Retry logic could go here. For now, continue.
+          pageNum++;
         }
       }
 
-      // If API found more or equal, OR if API found a "reasonable" amount (e.g. > 20) and DOM suggests the same order of magnitude
-      // Actually, simplest heuristic: Use whichever is larger.
-      if (apiCount >= domCount && apiCount > 0) {
-        logger.info(`🚀 Using API method (${apiCount} IDs >= ${domCount} DOM links)`);
-        products = apiProducts;
-        logger.info(`✅ Fetched ${products.length} products via API`);
-      } else {
-        // Fallback to DOM scraping
-        logger.warn(`⚠️  Preferring DOM scraping (${domCount} links > ${apiCount} API IDs)`);
+      // Cleanup
+      await context.close();
+      context = null;
 
-        if (domCount === 0) {
-          if (apiProducts.length > 0) {
-            // If DOM found 0, but API found some, use API (edge case)
-            logger.info(`⚠️  DOM found 0 links, reverting to API (${apiProducts.length} products)`);
-            products = apiProducts;
-          } else {
-            throw new Error('No product links found via DOM or API - check selectors and page load');
-          }
-        } else {
-          // Use the merged unique links from manufacturer iteration + DOM
-          const linksToScrape = Array.from(allUniqueProductLinks);
-          products = await this.scrapeProductDetails(page, linksToScrape, options?.dryRun);
-
-          // Safety Net: If DOM scraping failed to extract DETAILS (length 0), fallback to API
-          if (products.length === 0 && apiProducts.length > 0) {
-            logger.warn(`🚨 DOM scraping found links but extracted 0 products (selector mismatch?). Reverting to API (${apiProducts.length} products).`);
-            products = apiProducts;
-          }
-        }
-      }
-
-      let productsAdded = 0;
-      let productsUpdated = 0;
-      let productsUnchanged = 0;
-      const errors: string[] = [];
-      const warnings: string[] = [];
-
-      // Process and store products
-      for (let i = 0; i < products.length; i++) {
-        const rawProduct = products[i];
-
-        try {
-          if (i % 50 === 0) {
-            logSync.progress('Planet World', i, products.length);
-          }
-
-          // Transform to unified schema
-          const unifiedProduct = this.transformToUnified(rawProduct);
-
-          if (options?.dryRun) {
-            logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name} (RRP: ${unifiedProduct.retail_price}, Sell: ${unifiedProduct.selling_price}) Stock: ${unifiedProduct.total_stock}`);
-            continue;
-          }
-
-          // Upsert product
-          const result = await this.supabase.upsertProduct(unifiedProduct);
-
-          if (result.isNew) {
-            productsAdded++;
-          } else {
-            productsUpdated++;
-          }
-        } catch (error: any) {
-          const errorMsg = `Failed to process ${rawProduct.sku}: ${error.message}`;
-          errors.push(errorMsg);
-          logger.error(errorMsg);
-        }
-      }
-
-      // Calculate duration
       const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
 
-      // Complete sync session
       await this.supabase.completeSyncSession(sessionId, {
         products_added: productsAdded,
         products_updated: productsUpdated,
@@ -703,7 +271,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         warnings,
       });
 
-      // Update supplier
       await this.supabase.updateSupplierStatus(this.supplier.id, 'idle');
       await this.supabase.updateSupplierLastSync(this.supplier.id);
 
@@ -723,30 +290,26 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         warnings,
         duration_seconds: durationSeconds,
       };
-    } catch (error: any) {
-      logger.error(`❌ Planet World sync failed: ${error.message}`);
 
+    } catch (error: any) {
+      // ... Error handling simplified ...
+      logger.error(`❌ Planet World sync failed: ${error.message}`);
       if (sessionId && this.supplier) {
         await this.supabase.failSyncSession(sessionId, error);
         await this.supabase.updateSupplierStatus(this.supplier.id, 'error', error.message);
       }
-
-      const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-
       return {
         success: false,
         session_id: sessionId,
-        products_added: 0,
-        products_updated: 0,
-        products_unchanged: 0,
+        products_added: productsAdded,
+        products_updated: productsUpdated,
+        products_unchanged: productsUnchanged,
         errors: [error.message],
         warnings: [],
-        duration_seconds: durationSeconds,
+        duration_seconds: Math.floor((Date.now() - startTime) / 1000),
       };
     } finally {
-      if (context) {
-        await context.close();
-      }
+      if (context) await context.close();
     }
   }
 
@@ -808,227 +371,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
     }
   }
 
-  private async infiniteScroll(page: Page, maxScrolls: number = 50): Promise<number> {
-    let scrollCount = 0;
-    let previousProductCount = 0;
-    let noChangeCount = 0;
 
-    logger.info('📜 Infinite scrolling to load products...');
-
-    // Get initial product count
-    previousProductCount = await this.getProductLinkCount(page);
-    logger.info(`📦 Initial product count: ${previousProductCount}`);
-
-    while (scrollCount < maxScrolls) {
-      // Scroll gradually to bottom in steps (incrementally rather than instant jump)
-      // This helps trigger intersection observers more reliably
-      const scrollDistance = await page.evaluate(() => {
-        const maxScroll = document.body.scrollHeight - window.innerHeight;
-        const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
-        return maxScroll - currentScroll;
-      });
-
-      // Do gradual scrolling in chunks of 300px with longer delays to trigger intersection observers
-      const scrollStep = 300;
-      const stepsNeeded = Math.ceil(scrollDistance / scrollStep);
-
-      for (let step = 0; step < stepsNeeded && step < 15; step++) {
-        await page.evaluate((stepSize) => {
-          window.scrollBy(0, stepSize);
-        }, scrollStep);
-        await this.sleep(350); // Longer delay between scroll steps for intersection observers
-      }
-
-      // Final scroll to ensure we're at the bottom
-      await page.evaluate(() => {
-        window.scrollTo(0, document.body.scrollHeight);
-      });
-
-      scrollCount++;
-
-      // Wait for network activity to settle and content to load
-      try {
-        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      } catch {
-        // Network idle timeout is okay, continue
-      }
-      
-      // Wait for network activity to complete and content to render
-      await this.sleep(4000); // Increased wait to allow API calls to complete and products to render
-
-      // Check current product count (more reliable than page height)
-      const currentProductCount = await this.getProductLinkCount(page);
-
-      if (scrollCount % 5 === 0) {
-        logger.info(`📜 Scrolled ${scrollCount} times... Found ${currentProductCount} products so far`);
-      }
-
-      // Check if new products were loaded
-      if (currentProductCount > previousProductCount) {
-        // New products found - reset no-change counter
-        logger.info(`📦 Products increased: ${previousProductCount} → ${currentProductCount} (+${currentProductCount - previousProductCount})`);
-        previousProductCount = currentProductCount;
-        noChangeCount = 0;
-      } else {
-        // No new products - increment no-change counter
-        noChangeCount++;
-        
-        // Try a small scroll up and down to trigger intersection observers
-        if (noChangeCount < 3) {
-          await page.evaluate(() => window.scrollBy(0, -200));
-          await this.sleep(500);
-          await page.evaluate(() => window.scrollBy(0, 300));
-          await this.sleep(1000);
-          
-          // Re-check after scroll jiggle
-          const recheckCount = await this.getProductLinkCount(page);
-          if (recheckCount > currentProductCount) {
-            previousProductCount = recheckCount;
-            noChangeCount = 0;
-            continue;
-          }
-        }
-
-        // If no new products found for 3 consecutive scrolls, we're likely at the bottom
-        if (noChangeCount >= 3) {
-          logger.info(`✅ Reached bottom of page - ${currentProductCount} products loaded (no change for ${noChangeCount} scrolls)`);
-          break;
-        }
-      }
-    }
-
-    const finalCount = await this.getProductLinkCount(page);
-    logger.info(`📜 Scrolling complete: ${scrollCount} scrolls, ${finalCount} total products`);
-    return scrollCount;
-  }
-
-  private async getProductLinkCount(page: Page): Promise<number> {
-    return await page.evaluate(() => {
-      // Use the same selector logic as collectProductLinks to count products
-      const productContainers = [
-        '.product-grid a[href*="/products/"]',
-        '.product-list a[href*="/products/"]',
-        '.product-item a[href*="/products/"]',
-        '.products-container a[href*="/products/"]',
-        '#product-grid a[href*="/products/"]',
-        '.main-content a[href*="/products/"]',
-        '#content a[href*="/products/"]',
-        '.content a[href*="/products/"]',
-      ];
-
-      let links: Element[] = [];
-      for (const selector of productContainers) {
-        try {
-          const found = Array.from(document.querySelectorAll(selector));
-          if (found.length > 0) {
-            links = found;
-            break;
-          }
-        } catch (e) {
-          // Selector not found, try next
-        }
-      }
-
-      // Fallback: Get all product links but exclude sidebar/navigation
-      if (links.length === 0) {
-        const allProductLinks = Array.from(document.querySelectorAll('a[href*="/products/"]'));
-        links = allProductLinks.filter((link: any) => {
-          const parent = link.closest('.sidebar, .filter, nav, .navigation, .menu, aside, .categories');
-          return !parent;
-        });
-      }
-
-      // Filter for product detail pages (same logic as collectProductLinks)
-      const uniqueUrls = [...new Set(links.map((a: any) => a.href))];
-      const filteredUrls = uniqueUrls.filter((url: string) => {
-        // Always include URLs with productid param - these are definite product pages
-        if (url.includes('productid=')) {
-          return true;
-        }
-        // Exclude pure category browse pages (no productid)
-        if (url.includes('/products/browse/') && !url.includes('productid=')) {
-          return false;
-        }
-        // Exclude top-level category pages like /products/audio (single segment, no productid)
-        if (/\/products\/[^\/\?]+$/.test(url)) {
-          return false;
-        }
-        // Include product detail pages with slug (e.g., /products/audio/product-name-123)
-        // Also include any URL with query params that might indicate a product
-        return /\/products\/[^\/]+\/.+/.test(url) || url.includes('?');
-      });
-
-      return filteredUrls.length;
-    });
-  }
-
-  private async clickLoadMoreButtons(page: Page, maxClicks: number = 200): Promise<number> {
-    let clickCount = 0;
-
-    logger.info('🔄 Clicking Load More buttons...');
-
-    while (clickCount < maxClicks) {
-      const loadMoreSelectors = [
-        'text="Load More"',
-        'button:has-text("Load More")',
-        '[data-testid*="load-more"]',
-        '.load-more',
-        'button:has-text("Show More")',
-        'text="View More"',
-        'button[onclick*="load"]',
-        '.btn:has-text("Load More")',
-      ];
-
-      let buttonFound = false;
-
-      for (const selector of loadMoreSelectors) {
-        try {
-          const btn = page.locator(selector).first();
-          if (await btn.isVisible({ timeout: 1500 })) {
-            await btn.click();
-            clickCount++;
-            logger.info(`📱 Clicked Load More button #${clickCount}`);
-            buttonFound = true;
-
-            // Wait for content to load - increase wait time to ensure API responses are captured
-            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
-            await this.sleep(2000); // Increased wait to allow API responses to complete
-            break;
-          }
-        } catch {
-          // Button not found - continue
-        }
-      }
-
-      if (!buttonFound) {
-        logger.info('✅ No more Load More buttons - all products loaded');
-        break;
-      }
-    }
-
-    return clickCount;
-  }
-
-  // Helper to collect product links from current page state (no scrolling/waiting)
-  private async collectProductLinksFromCurrentPage(page: Page): Promise<string[]> {
-    return await page.evaluate(() => {
-      const links: string[] = [];
-      // Look for product links with productid parameter (definite product pages)
-      const productLinks = document.querySelectorAll('a[href*="productid="], a[href*="/products/"][href*="/"]');
-
-      productLinks.forEach((link: any) => {
-        const href = link.href;
-        if (href && (href.includes('productid=') || /\/products\/[^\/]+\/.+/.test(href))) {
-          // Exclude category/filter pages
-          if (!href.includes('/browse/') || href.includes('productid=')) {
-            links.push(href);
-          }
-        }
-      });
-
-      return [...new Set(links)]; // Remove duplicates
-    });
-  }
 
   private async collectProductLinks(page: Page, limit: number): Promise<string[]> {
     // Wait for product cards to actually appear in the DOM after scrolling/loading
@@ -1109,73 +452,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
     return allLinks.slice(0, limit);
   }
 
-  private async fetchProductsViaAPI(
-    productIds: number[],
-    dryRun?: boolean
-  ): Promise<PlanetWorldProduct[]> {
-    const products: PlanetWorldProduct[] = [];
 
-    logger.info(`📡 Fetching ${productIds.length} products via API...`);
-
-    // API endpoint: /api/store/seo-product/list?ids=5430&ids=5557&ids=5558...
-    // Batch products in groups of 50 to avoid URL length limits
-    const batchSize = 50;
-    for (let i = 0; i < productIds.length; i += batchSize) {
-      const batch = productIds.slice(i, i + batchSize);
-      const idsParam = batch.map(id => `ids=${id}`).join('&');
-      const apiUrl = `${this.config.baseUrl}/api/store/seo-product/list?${idsParam}`;
-
-      try {
-        logger.info(`📡 Fetching batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(productIds.length / batchSize)}`);
-
-        const response = await fetch(apiUrl, {
-          headers: {
-            'User-Agent': this.config.userAgent,
-            'Accept': 'application/json',
-            'Referer': `${this.config.baseUrl}${this.config.productsUrl}`,
-          }
-        });
-
-        if (!response.ok) {
-          logger.warn(`⚠️  API returned ${response.status} for batch ${i}-${i + batchSize}`);
-          continue;
-        }
-
-        const data = await response.json();
-
-        // Parse API response
-        if (Array.isArray(data)) {
-          for (const item of data) {
-            // Clean price string: "R 12,999.00" -> "12999.00"
-            const priceStr = (item.Price || '').toString().replace(/R/gi, '').replace(/,/g, '').replace(/\s/g, '');
-            const parsedPrice = parseFloat(priceStr);
-
-            const product: PlanetWorldProduct = {
-              sku: item.Sku || item.ProductId?.toString() || '',
-              name: item.Name || '',
-              price: !isNaN(parsedPrice) ? parsedPrice : 0,
-              category: Array.isArray(item.Categories) ? item.Categories[0] : (item.Category || ''),
-              brand: item.Brand || 'Unknown',
-              image: Array.isArray(item.ImageUrls) && item.ImageUrls.length > 0 ? item.ImageUrls[0] : '',
-              productUrl: item.Url || `${this.config.baseUrl}/products/${item.ProductId}`,
-              description: item.Description || '',
-              inStock: item.HasStock === 'InStock' || item.StockQty > 0,
-            };
-
-            if (product.sku && product.name) {
-              products.push(product);
-            }
-          }
-        }
-
-        await this.sleep(500); // Rate limiting
-      } catch (error: any) {
-        logger.error(`❌ API fetch failed for batch ${i}-${i + batchSize}: ${error.message}`);
-      }
-    }
-
-    return products;
-  }
 
   private async scrapeProductDetails(
     page: Page,
