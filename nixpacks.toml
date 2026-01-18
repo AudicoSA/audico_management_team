@@ -1,0 +1,58 @@
+# Last updated: 2026-01-18 (Force Rebuild)
+[phases.setup]
+nixPkgs = [
+    "python311", 
+    "python311Packages.pip", 
+    "python311Packages.virtualenv", 
+    "nodejs_20",
+
+    "gcc", 
+    "binutils",
+    "chromium",
+    "fontconfig",
+    "freetype",
+    "xorg.libX11",
+    "xorg.libxcb",
+    "xorg.libXcomposite",
+    "xorg.libXcursor",
+    "xorg.libXdamage",
+    "xorg.libXext",
+    "xorg.libXfixes",
+    "xorg.libXi",
+    "xorg.libXrender",
+    "xorg.libXtst",
+    "nss",
+    "nspr",
+    "alsa-lib",
+    "cups",
+    "dbus",
+    "expat",
+    "glib",
+    "gtk3",
+    "pango",
+    "at-spi2-core"
+]
+nixLibs = ["stdenv.cc.cc.lib", "zlib"]
+
+[phases.install]
+cmds = [
+  "python -m venv /opt/venv",
+  ". /opt/venv/bin/activate && pip install -r requirements.txt",
+  "npm install -g typescript",
+  "cd mcp-http-service && npm install",
+  "cd mcp-servers/shared && npm install && npm run build",
+  "cd mcp-servers/mcp-feed-planetworld && npm install && npm run build",
+  "cd mcp-servers/mcp-feed-planetworld && npx playwright install chromium --with-deps"
+]
+
+[phases.build]
+cmds = [
+    "echo 'Building application components...'"
+]
+
+[variables]
+CHROMIUM_PATH = "/nix/store/*/bin/chromium"
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "0"
+
+[start]
+cmd = "bash start.sh"
