@@ -5,7 +5,7 @@ nixPkgs = [
     "python311Packages.pip", 
     "python311Packages.virtualenv", 
     "nodejs_20",
-    "npm",
+
     "gcc", 
     "binutils",
     "chromium",

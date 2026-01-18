@@ -766,8 +766,10 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             const priceEl = document.querySelector(selector) as any;
             if (priceEl) {
               const priceText = priceEl.innerText || priceEl.textContent || '';
-              const cleanText = priceText.replace(/\s/g, '').replace(/,/g, '');
-              const priceMatch = cleanText.match(/R?([0-9]+(?:\.[0-9]{1,2})?)/i);
+              // Robust cleaning: "R 12,999.00" -> "12999.00"
+              // Remove 'R', commas (thousands separator), spaces
+              const cleanText = priceText.replace(/[R\s,]/gi, '').replace(/Price/gi, '');
+              const priceMatch = cleanText.match(/([0-9]+(\.[0-9]+)?)/);
 
               if (priceMatch) {
                 const extracted = parseFloat(priceMatch[1]);
