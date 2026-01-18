@@ -264,38 +264,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       if (options?.dryRun) {
         await page.screenshot({ path: 'debug-klipsch-page.png', fullPage: true });
         logger.info(`📸 Screenshot saved to debug-klipsch-page.png`);
-
-        const pageStructure = await page.evaluate(() => {
-          // Look for common product container patterns
-          const selectors = [
-            '.product', '.product-card', '.product-item', '.product-listing',
-            '[data-product]', '[data-product-id]',
-            '.item', '.card', '.listing-item',
-            'div[class*="product"]', 'div[id*="product"]'
-          ];
-
-          const found = selectors.map(sel => {
-            const elements = document.querySelectorAll(sel);
-            return {
-              selector: sel,
-              count: elements.length,
-              sample: elements.length > 0 ? {
-                html: elements[0].outerHTML.substring(0, 500),
-                text: elements[0].textContent?.trim().substring(0, 100)
-              } : null
-            };
-          }).filter(r => r.count > 0);
-
-          return found;
-        });
-
-        logger.info(`🔍 DEBUG: Potential product containers:`);
-        pageStructure.forEach(p => {
-          logger.info(`   ${p.selector}: ${p.count} elements`);
-          if (p.sample) {
-            logger.info(`      Text: ${p.sample.text}`);
-          }
-        });
       }
 
       // NEW APPROACH: Extract product IDs from page and use API directly
@@ -324,22 +292,37 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       logger.info(`✅ Found ${productIds.size} product IDs from API tracking`);
 
-      // If we found product IDs, fetch them directly via API
+      // Collect DOM links to compare
+      const productLinks = await this.collectProductLinks(page, options?.limit || 10000);
+      logger.info(`🔍 Found ${productLinks.length} product links via DOM`);
+
+      // Decision Logic: Use API if it captured a significant number of products (or more than DOM),
+      // otherwise fallback to DOM if API missed them (e.g. Load More didn't trigger API logs correctly).
       let products: PlanetWorldProduct[] = [];
-      if (productIds.size > 0) {
+      const apiCount = productIds.size;
+      const domCount = productLinks.length;
+
+      // If API found more or equal, OR if API found a "reasonable" amount (e.g. > 20) and DOM suggests the same order of magnitude
+      // Actually, simplest heuristic: Use whichever is larger.
+      if (apiCount >= domCount && apiCount > 0) {
+        logger.info(`🚀 Using API method (${apiCount} IDs >= ${domCount} DOM links)`);
         products = await this.fetchProductsViaAPI(Array.from(productIds), options?.dryRun);
         logger.info(`✅ Fetched ${products.length} products via API`);
       } else {
-        // Fallback to DOM scraping if no IDs found
-        logger.warn('⚠️  No product IDs found, falling back to DOM scraping');
-        const productLinks = await this.collectProductLinks(page, options?.limit || 10000);
-        logger.info(`🔍 Found ${productLinks.length} product links via DOM`);
+        // Fallback to DOM scraping
+        logger.warn(`⚠️  Preferring DOM scraping (${domCount} links > ${apiCount} API IDs)`);
 
-        if (productLinks.length === 0) {
-          throw new Error('No product links found - check selectors');
+        if (domCount === 0) {
+          if (apiCount > 0) {
+            // If DOM found 0, but API found some, use API (edge case)
+            logger.info(`⚠️  DOM found 0, reverting to API (${apiCount} IDs)`);
+            products = await this.fetchProductsViaAPI(Array.from(productIds), options?.dryRun);
+          } else {
+            throw new Error('No product links found via DOM or API - check selectors and page load');
+          }
+        } else {
+          products = await this.scrapeProductDetails(page, productLinks, options?.dryRun);
         }
-
-        products = await this.scrapeProductDetails(page, productLinks, options?.dryRun);
       }
 
       let productsAdded = 0;
@@ -506,11 +489,11 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
     while (scrollCount < maxScrolls) {
       // Get current page height
-      const currentHeight = await page.evaluate(() => document.body.scrollHeight);
+      previousHeight = await page.evaluate(() => document.body.scrollHeight);
 
-      // Scroll down slowly
+      // Scroll to bottom to trigger lazy loading
       await page.evaluate(() => {
-        window.scrollBy(0, window.innerHeight * 0.8); // Scroll 80% of viewport
+        window.scrollTo(0, document.body.scrollHeight);
       });
 
       scrollCount++;
@@ -519,13 +502,23 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         logger.info(`📜 Scrolled ${scrollCount} times...`);
       }
 
-      // Wait for content to load
-      await this.sleep(1000); // Slower scroll for lazy loading
+      // Wait longer for content to load (2s)
+      await this.sleep(2000);
+
+      // Get new height
+      const currentHeight = await page.evaluate(() => document.body.scrollHeight);
 
       // Check if we've reached the bottom
       if (currentHeight === previousHeight) {
         noChangeCount++;
-        // If height hasn't changed for 3 consecutive scrolls, we're at the bottom
+        // Try a small scroll up and down to unstick
+        if (noChangeCount < 3) {
+          await page.evaluate(() => window.scrollBy(0, -100));
+          await this.sleep(500);
+          await page.evaluate(() => window.scrollBy(0, 100));
+        }
+
+        // If height hasn't changed for 3 consecutive aggressive scrolls, we're at the bottom
         if (noChangeCount >= 3) {
           logger.info('✅ Reached bottom of page - all products loaded');
           break;
@@ -533,8 +526,6 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       } else {
         noChangeCount = 0;
       }
-
-      previousHeight = currentHeight;
     }
 
     return scrollCount;
