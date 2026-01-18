@@ -115,6 +115,61 @@ class MCPSyncOrchestrator:
                 "output": None,
                 "error": str(e)
             }
+
+    async def sync_single_with_logging(self, server_key: str) -> Dict:
+        """Sync a single supplier with full database logging."""
+        # Find server config
+        server = next((s for s in MCP_SERVERS if s["endpoint"] == server_key or s["name"].lower() == server_key.lower()), None)
+        
+        if not server:
+            raise ValueError(f"Supplier not found: {server_key}")
+            
+        logger.info("sync_single_start", supplier=server["name"])
+        
+        # Create sync session
+        session_data = {
+            "started_at": datetime.now().isoformat(),
+            "status": "running",
+            "total_suppliers": 1,
+            "completed_suppliers": 0,
+            "failed_suppliers": 0,
+            "triggered_by": "api-single"
+        }
+        
+        session_response = self.supabase.client.table("mcp_sync_sessions")\
+            .insert(session_data)\
+            .execute()
+            
+        self.session_id = session_response.data[0]["id"]
+        
+        # Run sync
+        result = await self.sync_supplier(server)
+        
+        # Log result
+        self.supabase.client.table("mcp_sync_log")\
+            .insert({
+                "session_id": self.session_id,
+                "supplier_name": result["supplier"],
+                "status": result["status"],
+                "duration_seconds": result["duration"],
+                "output": result["output"],
+                "error": result["error"]
+            })\
+            .execute()
+            
+        # Update session status
+        is_success = result["status"] == "success"
+        self.supabase.client.table("mcp_sync_sessions")\
+            .update({
+                "completed_at": datetime.now().isoformat(),
+                "status": "completed" if is_success else "failed",
+                "completed_suppliers": 1 if is_success else 0,
+                "failed_suppliers": 0 if is_success else 1
+            })\
+            .eq("id", self.session_id)\
+            .execute()
+            
+        return result
     
     async def sync_all(self) -> Dict:
         """Sync all enabled MCP servers sequentially."""

@@ -49,12 +49,10 @@ async def trigger_single_sync(supplier_key: str):
         
     try:
         orchestrator = MCPSyncOrchestrator()
-        # We need to wrap single sync in a session for logging
-        # Or just run it. Prefer running structured.
         
-        # Start background task
+        # Start background task with logging
         async def _run_single():
-             await orchestrator.sync_supplier(server)
+             await orchestrator.sync_single_with_logging(server["endpoint"])
              
         asyncio.create_task(_run_single())
         
