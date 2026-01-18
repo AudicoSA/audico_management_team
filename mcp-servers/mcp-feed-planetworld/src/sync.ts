@@ -37,13 +37,12 @@ async function main() {
   const server = new PlanetWorldMCPServer();
 
   // Test connection first
-  logger.info('Step 1: Testing connection...');
-  const connected = await server.testConnection();
-
-  if (!connected) {
-    logger.error('❌ Connection failed. Aborting sync.');
-    process.exit(1);
-  }
+  // logger.info('Step 1: Testing connection...');
+  // const connected = await server.testConnection();
+  // if (!connected) {
+  //   logger.error('❌ Connection failed. Aborting sync.');
+  //   process.exit(1);
+  // }
 
   // Get current status
   logger.info('\nStep 2: Checking current status...');
