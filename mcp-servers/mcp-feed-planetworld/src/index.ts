@@ -4,6 +4,7 @@
  */
 
 import 'dotenv/config';
+// @ts-ignore
 import { chromium as playwrightChromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, Page, BrowserContext } from 'playwright';
@@ -156,6 +157,10 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           '--disable-setuid-sandbox',
         ],
       });
+
+      if (!context) {
+        throw new Error('Failed to launch browser context');
+      }
 
       const page = context.pages()[0] || await context.newPage();
 
