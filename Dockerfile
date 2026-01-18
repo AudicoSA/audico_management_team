@@ -25,8 +25,8 @@ COPY mcp-servers/mcp-feed-planetworld/package*.json ./mcp-servers/mcp-feed-plane
 
 # Install Node dependencies
 # Note: The base image already has Playwright browsers installed
-RUN npm ci --workspace=mcp-servers/shared
-RUN npm ci --workspace=mcp-servers/mcp-feed-planetworld
+RUN cd mcp-servers/shared && npm ci
+RUN cd mcp-servers/mcp-feed-planetworld && npm ci
 
 # Add --disable-dev-shm-usage flag support via env var if needed, 
 # but we hardcoded it in the typescript code as well.
@@ -39,8 +39,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Build TypeScript for MCP servers
-RUN npm run build --workspace=mcp-servers/shared
-RUN npm run build --workspace=mcp-servers/mcp-feed-planetworld
+RUN cd mcp-servers/shared && npm run build
+RUN cd mcp-servers/mcp-feed-planetworld && npm run build
 
 # Set environment variables for headless operation
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
