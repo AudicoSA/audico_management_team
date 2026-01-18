@@ -109,3 +109,36 @@ async def get_sync_session(session_id: str):
         "session": session.data,
         "logs": logs.data
     }
+
+@router.get("/health")
+async def check_mcp_health():
+    """Check connectivity to the Node.js MCP service."""
+    from src.jobs.sync_all_suppliers import MCP_SERVICE_URL
+    import httpx
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{MCP_SERVICE_URL}/health")
+            
+            if response.status_code == 200:
+                return {
+                    "status": "connected",
+                    "mcp_service": "healthy",
+                    "url": MCP_SERVICE_URL,
+                    "details": response.json()
+                }
+            else:
+                return {
+                    "status": "error",
+                    "mcp_service": "unhealthy", 
+                    "status_code": response.status_code,
+                    "url": MCP_SERVICE_URL,
+                    "error": response.text
+                }
+    except Exception as e:
+        return {
+            "status": "error",
+            "mcp_service": "unreachable",
+            "url": MCP_SERVICE_URL,
+            "error": str(e)
+        }

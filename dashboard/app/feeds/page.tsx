@@ -94,21 +94,30 @@ export default function FeedsPage() {
         if (!confirm("Start a full sync of all supplier feeds? This may take a few minutes.")) return
 
         try {
-            await fetch(`${API_URL}/api/mcp/sync-all`, { method: 'POST' })
+            const res = await fetch(`${API_URL}/api/mcp/sync-all`, { method: 'POST' })
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }))
+                alert(`Failed to start sync: ${err.detail || res.statusText}`)
+                return;
+            }
             alert("Global sync started in background.")
             setTimeout(fetchSessions, 1000)
         } catch (error) {
-            alert("Failed to start sync")
+            alert(`Failed to start sync: ${error}`)
         }
     }
 
     const handleSingleSync = async (supplierEndpoint: string, supplierName: string) => {
         setSyncingMap(prev => ({ ...prev, [supplierEndpoint]: true }))
         try {
-            await fetch(`${API_URL}/api/mcp/sync/${supplierEndpoint}`, { method: 'POST' })
+            const res = await fetch(`${API_URL}/api/mcp/sync/${supplierEndpoint}`, { method: 'POST' })
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }))
+                alert(`Failed to sync ${supplierName}: ${err.detail || res.statusText}`)
+            }
             setTimeout(fetchSessions, 2000)
         } catch (error) {
-            alert(`Failed to sync ${supplierName}`)
+            alert(`Failed to sync ${supplierName}: ${error}`)
         } finally {
             setTimeout(() => {
                 setSyncingMap(prev => ({ ...prev, [supplierEndpoint]: false }))
@@ -125,6 +134,16 @@ export default function FeedsPage() {
         return `${diff.toFixed(1)}s`
     }
 
+    const checkHealth = async () => {
+        try {
+            const res = await fetch(`${API_URL}/api/mcp/health`)
+            const data = await res.json()
+            alert(JSON.stringify(data, null, 2))
+        } catch (error) {
+            alert(`Health check failed: ${error}`)
+        }
+    }
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6 text-white">
             <div className="max-w-7xl mx-auto">
@@ -136,6 +155,12 @@ export default function FeedsPage() {
                         </h1>
                         <p className="text-slate-400 mt-2">Manage and monitor automated supplier feed synchronizations.</p>
                     </div>
+                    <button
+                        onClick={checkHealth}
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm text-slate-300 transition-colors border border-slate-700"
+                    >
+                        Test Connection
+                    </button>
                 </div>
 
                 {/* Tabs / View Switcher */}
@@ -184,10 +209,10 @@ export default function FeedsPage() {
                                     onClick={() => handleSingleSync(sup.endpoint, sup.name)}
                                     disabled={!sup.enabled || syncingMap[sup.endpoint]}
                                     className={`mt-4 w-full py-2.5 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-all ${!sup.enabled
-                                            ? 'bg-white/5 text-slate-500 cursor-not-allowed'
-                                            : syncingMap[sup.endpoint]
-                                                ? 'bg-blue-600/50 text-white cursor-wait'
-                                                : 'bg-white/10 hover:bg-white/20 text-white border border-white/10 hover:border-white/30'
+                                        ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                                        : syncingMap[sup.endpoint]
+                                            ? 'bg-blue-600/50 text-white cursor-wait'
+                                            : 'bg-white/10 hover:bg-white/20 text-white border border-white/10 hover:border-white/30'
                                         }`}
                                 >
                                     {syncingMap[sup.endpoint] ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -211,8 +236,8 @@ export default function FeedsPage() {
                                         key={session.id}
                                         onClick={() => handleSessionClick(session)}
                                         className={`p-4 rounded-xl cursor-pointer transition-all border ${selectedSession?.id === session.id
-                                                ? 'bg-white/10 border-orange-500/50'
-                                                : 'bg-white/5 border-white/5 hover:bg-white/10'
+                                            ? 'bg-white/10 border-orange-500/50'
+                                            : 'bg-white/5 border-white/5 hover:bg-white/10'
                                             }`}
                                     >
                                         <div className="flex justify-between items-start mb-2">
