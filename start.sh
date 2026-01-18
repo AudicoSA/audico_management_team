@@ -3,6 +3,9 @@
 # Activate Python Virtual Environment
 source /opt/venv/bin/activate
 
+# Set Chromium path for Playwright to use system chromium (installed via nixpkgs)
+export CHROMIUM_PATH=$(which chromium 2>/dev/null || which chromium-browser 2>/dev/null || echo "")
+
 # Start Backend API (FastAPI) in background
 echo "🚀 Starting Python Backend..."
 python -m uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} &

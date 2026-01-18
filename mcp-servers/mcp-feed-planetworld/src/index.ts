@@ -180,7 +180,8 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       // Launch with persistent context (Chrome channel + saved state)
       context = await playwrightChromium.launchPersistentContext(userDataDir, {
-        // channel: 'chromium', // Using bundled browser
+        // Use system chromium on Railway/Nix environments where it's pre-installed with all deps
+        executablePath: process.env.CHROMIUM_PATH || undefined,
         headless: this.config.headless,
         locale: 'en-ZA', // South African English
         timezoneId: 'Africa/Johannesburg', // SA timezone

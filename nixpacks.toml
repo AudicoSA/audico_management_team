@@ -41,7 +41,7 @@ cmds = [
   "npm install -g typescript",
   "cd mcp-http-service && npm install",
   "cd mcp-servers/shared && npm install && npm run build",
-  "cd mcp-servers/mcp-feed-planetworld && npm install && node ./node_modules/playwright/cli.js install chromium --with-deps && npm run build"
+  "cd mcp-servers/mcp-feed-planetworld && npm install && npm run build"
 ]
 
 [phases.build]
