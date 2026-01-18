@@ -499,53 +499,146 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
   private async infiniteScroll(page: Page, maxScrolls: number = 50): Promise<number> {
     let scrollCount = 0;
-    let previousHeight = 0;
+    let previousProductCount = 0;
     let noChangeCount = 0;
 
     logger.info('📜 Infinite scrolling to load products...');
 
-    while (scrollCount < maxScrolls) {
-      // Get current page height
-      previousHeight = await page.evaluate(() => document.body.scrollHeight);
+    // Get initial product count
+    previousProductCount = await this.getProductLinkCount(page);
 
-      // Scroll to bottom to trigger lazy loading
+    while (scrollCount < maxScrolls) {
+      // Scroll gradually to bottom (incrementally rather than instant jump)
+      // This helps trigger intersection observers more reliably
       await page.evaluate(() => {
-        window.scrollTo(0, document.body.scrollHeight);
+        const scrollStep = 500;
+        const scrollInterval = setInterval(() => {
+          const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
+          const maxScroll = document.body.scrollHeight - window.innerHeight;
+          
+          if (currentScroll >= maxScroll - 100) {
+            clearInterval(scrollInterval);
+            window.scrollTo(0, document.body.scrollHeight);
+          } else {
+            window.scrollBy(0, scrollStep);
+          }
+        }, 100);
+        
+        // Safety timeout
+        setTimeout(() => clearInterval(scrollInterval), 5000);
       });
 
       scrollCount++;
 
-      if (scrollCount % 5 === 0) {
-        logger.info(`📜 Scrolled ${scrollCount} times...`);
+      // Wait for network activity to settle and content to load
+      try {
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      } catch {
+        // Network idle timeout is okay, continue
       }
-
-      // Wait longer for content to load (2s)
+      
+      // Additional wait for content rendering
       await this.sleep(2000);
 
-      // Get new height
-      const currentHeight = await page.evaluate(() => document.body.scrollHeight);
+      // Check current product count (more reliable than page height)
+      const currentProductCount = await this.getProductLinkCount(page);
 
-      // Check if we've reached the bottom
-      if (currentHeight === previousHeight) {
+      if (scrollCount % 5 === 0) {
+        logger.info(`📜 Scrolled ${scrollCount} times... Found ${currentProductCount} products so far`);
+      }
+
+      // Check if new products were loaded
+      if (currentProductCount > previousProductCount) {
+        // New products found - reset no-change counter
+        logger.info(`📦 Products increased: ${previousProductCount} → ${currentProductCount} (+${currentProductCount - previousProductCount})`);
+        previousProductCount = currentProductCount;
+        noChangeCount = 0;
+      } else {
+        // No new products - increment no-change counter
         noChangeCount++;
-        // Try a small scroll up and down to unstick
+        
+        // Try a small scroll up and down to trigger intersection observers
         if (noChangeCount < 3) {
-          await page.evaluate(() => window.scrollBy(0, -100));
+          await page.evaluate(() => window.scrollBy(0, -200));
           await this.sleep(500);
-          await page.evaluate(() => window.scrollBy(0, 100));
+          await page.evaluate(() => window.scrollBy(0, 300));
+          await this.sleep(1000);
+          
+          // Re-check after scroll jiggle
+          const recheckCount = await this.getProductLinkCount(page);
+          if (recheckCount > currentProductCount) {
+            previousProductCount = recheckCount;
+            noChangeCount = 0;
+            continue;
+          }
         }
 
-        // If height hasn't changed for 3 consecutive aggressive scrolls, we're at the bottom
+        // If no new products found for 3 consecutive scrolls, we're likely at the bottom
         if (noChangeCount >= 3) {
-          logger.info('✅ Reached bottom of page - all products loaded');
+          logger.info(`✅ Reached bottom of page - ${currentProductCount} products loaded (no change for ${noChangeCount} scrolls)`);
           break;
         }
-      } else {
-        noChangeCount = 0;
       }
     }
 
+    const finalCount = await this.getProductLinkCount(page);
+    logger.info(`📜 Scrolling complete: ${scrollCount} scrolls, ${finalCount} total products`);
     return scrollCount;
+  }
+
+  private async getProductLinkCount(page: Page): Promise<number> {
+    return await page.evaluate(() => {
+      // Use the same selector logic as collectProductLinks to count products
+      const productContainers = [
+        '.product-grid a[href*="/products/"]',
+        '.product-list a[href*="/products/"]',
+        '.product-item a[href*="/products/"]',
+        '.products-container a[href*="/products/"]',
+        '#product-grid a[href*="/products/"]',
+        '.main-content a[href*="/products/"]',
+        '#content a[href*="/products/"]',
+        '.content a[href*="/products/"]',
+      ];
+
+      let links: Element[] = [];
+      for (const selector of productContainers) {
+        try {
+          const found = Array.from(document.querySelectorAll(selector));
+          if (found.length > 0) {
+            links = found;
+            break;
+          }
+        } catch (e) {
+          // Selector not found, try next
+        }
+      }
+
+      // Fallback: Get all product links but exclude sidebar/navigation
+      if (links.length === 0) {
+        const allProductLinks = Array.from(document.querySelectorAll('a[href*="/products/"]'));
+        links = allProductLinks.filter((link: any) => {
+          const parent = link.closest('.sidebar, .filter, nav, .navigation, .menu, aside, .categories');
+          return !parent;
+        });
+      }
+
+      // Filter for product detail pages (same logic as collectProductLinks)
+      const uniqueUrls = [...new Set(links.map((a: any) => a.href))];
+      const filteredUrls = uniqueUrls.filter((url: string) => {
+        if (url.includes('/products/browse/') && !url.includes('productid=')) {
+          return false;
+        }
+        if (/\/products\/[^\/]+$/.test(url) && !url.includes('productid=')) {
+          return false;
+        }
+        if (url.includes('productid=')) {
+          return true;
+        }
+        return /\/products\/[^\/]+\/.+/.test(url);
+      });
+
+      return filteredUrls.length;
+    });
   }
 
   private async clickLoadMoreButtons(page: Page, maxClicks: number = 200): Promise<number> {
