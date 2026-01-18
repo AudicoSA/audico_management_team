@@ -7,6 +7,17 @@ import dotenv from 'dotenv';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 
+// Global error handlers to catch crashes
+process.on('uncaughtException', (err) => {
+    console.error('💥 UNCAUGHT EXCEPTION:', err);
+    console.error('Stack:', err.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 UNHANDLED REJECTION at:', promise);
+    console.error('Reason:', reason);
+});
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -86,14 +97,24 @@ async function runMCPSync(serverKey, sessionId = null) {
             stdout += `\nFailed to read script: ${err.message}\n`;
         }
 
-        console.log(`[${server.name}] Starting sync: node ${syncScriptPath}`);
+        console.log(`[${server.name}] 🚀 ABOUT TO SPAWN: node ${syncScriptPath}`);
+        console.log(`[${server.name}] Working directory: ${serverPath}`);
+        console.log(`[${server.name}] Process env keys:`, Object.keys(process.env).slice(0, 10));
 
-        // Execute node directly without shell
-        const child = spawn('node', [syncScriptPath], {
-            cwd: serverPath,
-            shell: false,  // Don't use shell - avoids /bin/sh dependency
-            env: { ...process.env }
-        });
+        let child;
+        try {
+            // Execute node directly without shell
+            child = spawn('node', [syncScriptPath], {
+                cwd: serverPath,
+                shell: false,  // Don't use shell - avoids /bin/sh dependency
+                env: { ...process.env }
+            });
+            console.log(`[${server.name}] ✅ SPAWN SUCCESSFUL - PID: ${child.pid}`);
+        } catch (spawnErr) {
+            console.error(`[${server.name}] 💥 SPAWN FAILED:`, spawnErr);
+            console.error(`[${server.name}] Spawn error stack:`, spawnErr.stack);
+            throw spawnErr;
+        }
 
         child.stdout.on('data', (data) => {
             const output = data.toString();
