@@ -78,7 +78,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       }
 
       const context = await playwrightChromium.launchPersistentContext(userDataDir, {
-        channel: 'chromium',
+        // channel: 'chromium',
         headless: this.config.headless,
         locale: 'en-ZA',
         timezoneId: 'Africa/Johannesburg',
@@ -142,7 +142,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       // Launch with persistent context (Chrome channel + saved state)
       context = await playwrightChromium.launchPersistentContext(userDataDir, {
-        channel: 'chromium', // Use Chromium (installed via nixpacks)
+        // channel: 'chromium', // Using bundled browser
         headless: this.config.headless,
         locale: 'en-ZA', // South African English
         timezoneId: 'Africa/Johannesburg', // SA timezone
