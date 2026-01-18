@@ -241,7 +241,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
           if (products.length > 0) {
             // Only increment log progress if we actually found stuff
-            logSync.progress('Planet World', productsAdded + productsUpdated, 'unknown');
+            logSync.progress('Planet World', productsAdded + productsUpdated, 0);
           }
 
           pageNum++;
