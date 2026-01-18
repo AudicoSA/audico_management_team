@@ -322,17 +322,57 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       await this.sleep(3000);
 
       // DIRECT PAGINATION: Use page context to fetch all pages (avoids 403 from Load More)
-      // The /products/load-more endpoint returns 403, so we use browser context to make AJAX calls
+      // The /products/load-more endpoint requires categoryids parameter extracted from the page
       logger.info('🔍 Attempting direct pagination using browser context...');
       try {
-        const totalPages = Math.ceil(1853 / 16); // ~116 pages based on web fetch info
+        // First, extract the categoryids and other filter params from the current page
+        const pageFilterParams = await page.evaluate(() => {
+          // Try to find categoryids from hidden input or data attribute
+          const categoryInput = document.querySelector('input[name="categoryids"], input[name="CategoryIds"]') as HTMLInputElement;
+          const categoryIds = categoryInput?.value || '';
+
+          // Also check URL parameters
+          const urlParams = new URLSearchParams(window.location.search);
+          const urlCategoryIds = urlParams.get('categoryids') || urlParams.get('CategoryIds') || '';
+
+          // Check for the load-more button's data
+          const loadMoreBtn = document.querySelector('.load-more-button, [data-load-more], .btn-load-more, button[onclick*="loadMore"]');
+
+          // Get all category IDs from filter links on the page (these are the available categories)
+          const categoryLinks = document.querySelectorAll('a[href*="categoryids="]');
+          const allCategoryIds = new Set<string>();
+          categoryLinks.forEach((link: any) => {
+            const href = link.href || '';
+            const match = href.match(/categoryids=([^&]+)/);
+            if (match && match[1]) {
+              match[1].split(',').forEach((id: string) => allCategoryIds.add(id));
+            }
+          });
+
+          // Get the page's current product count to estimate total pages
+          const totalText = document.querySelector('.product-count, .results-count, .total-products')?.textContent || '';
+          const totalMatch = totalText.match(/(\d[\d,]*)/);
+          const totalProducts = totalMatch ? parseInt(totalMatch[1].replace(',', '')) : 1853;
+
+          return {
+            categoryIds: categoryIds || urlCategoryIds || Array.from(allCategoryIds).join(',') || '690',
+            totalProducts
+          };
+        });
+
+        logger.info(`📋 Filter params: categoryIds=${pageFilterParams.categoryIds}, totalProducts=${pageFilterParams.totalProducts}`);
+
+        const totalPages = Math.ceil(pageFilterParams.totalProducts / 16);
         const maxPages = Math.min(totalPages, 120); // Cap at 120 pages
 
         for (let pageNum = 2; pageNum <= maxPages; pageNum++) {
           try {
-            // Use page.evaluate to make AJAX call with proper cookies/session
-            const pageProducts = await page.evaluate(async (pn: number) => {
-              const response = await fetch(`/products/load-more?page=${pn}&sortBy=Default`, {
+            // Use page.evaluate to make AJAX call with proper cookies/session AND categoryids
+            const pageProducts = await page.evaluate(async (params: { pageNum: number; categoryIds: string }) => {
+              // Build the URL with categoryids to match what the real Load More button does
+              const url = `/products/load-more?categoryids=${params.categoryIds}&page=${params.pageNum}&sortBy=Default`;
+
+              const response = await fetch(url, {
                 method: 'GET',
                 credentials: 'include',
                 headers: {
@@ -342,31 +382,48 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
               });
 
               if (!response.ok) {
-                return { error: response.status, html: '' };
+                return { error: response.status, html: '', url };
               }
 
               const html = await response.text();
               // Extract product IDs from the HTML response
               const ids: number[] = [];
+
+              // Try data-id attribute (common in product cards)
               const idMatches = html.matchAll(/data-id="(\d+)"/g);
               for (const match of idMatches) {
                 if (match[1]) ids.push(parseInt(match[1]));
               }
-              // Also try productid in URLs
+
+              // Try productid in URLs
               const urlMatches = html.matchAll(/productid=(\d+)/gi);
               for (const match of urlMatches) {
                 if (match[1]) ids.push(parseInt(match[1]));
               }
-              return { error: null, ids, count: ids.length };
-            }, pageNum);
+
+              // Try data-product-id attribute
+              const prodIdMatches = html.matchAll(/data-product-id="(\d+)"/g);
+              for (const match of prodIdMatches) {
+                if (match[1]) ids.push(parseInt(match[1]));
+              }
+
+              // Try ID in product card divs (e.g., id="product-123")
+              const divIdMatches = html.matchAll(/id="product-(\d+)"/g);
+              for (const match of divIdMatches) {
+                if (match[1]) ids.push(parseInt(match[1]));
+              }
+
+              return { error: null, ids, count: ids.length, htmlLength: html.length, url };
+            }, { pageNum, categoryIds: pageFilterParams.categoryIds });
 
             if (pageProducts.error) {
               if (pageProducts.error === 403) {
-                logger.warn(`⚠️ Page ${pageNum} returned 403 - site may be blocking requests`);
+                logger.warn(`⚠️ Page ${pageNum} returned 403 (${pageProducts.url}) - site may be blocking requests`);
                 // Try a small delay and continue
                 await this.sleep(2000);
                 continue;
               }
+              logger.warn(`⚠️ Page ${pageNum} returned error ${pageProducts.error}`);
               break;
             }
 
@@ -374,24 +431,24 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
               for (const id of pageProducts.ids) {
                 productIds.add(id);
               }
-              if (pageNum % 10 === 0) {
-                logger.info(`📄 Page ${pageNum}: Found ${pageProducts.count} products (${productIds.size} total IDs)`);
+              if (pageNum % 10 === 0 || pageNum === 2) {
+                logger.info(`📄 Page ${pageNum}: Found ${pageProducts.count} products (${productIds.size} total IDs, html=${pageProducts.htmlLength} bytes)`);
               }
             } else {
-              // No more products
-              logger.info(`📄 Page ${pageNum}: No more products found, stopping pagination`);
+              // No more products - log why
+              logger.info(`📄 Page ${pageNum}: No products found (html=${pageProducts.htmlLength} bytes), stopping pagination`);
               break;
             }
 
             // Small delay to avoid rate limiting
-            await this.sleep(500);
-          } catch (e) {
-            logger.warn(`⚠️ Error fetching page ${pageNum}, continuing...`);
+            await this.sleep(300);
+          } catch (e: any) {
+            logger.warn(`⚠️ Error fetching page ${pageNum}: ${e.message || e}, continuing...`);
           }
         }
         logger.info(`✅ Direct pagination complete: ${productIds.size} total product IDs`);
-      } catch (e) {
-        logger.info('ℹ️ Direct pagination failed, falling back to captured data');
+      } catch (e: any) {
+        logger.info(`ℹ️ Direct pagination failed: ${e.message || e}, falling back to captured data`);
       }
       
       // Log details about captured API requests
