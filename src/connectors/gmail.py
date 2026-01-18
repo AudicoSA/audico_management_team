@@ -100,12 +100,18 @@ class GmailConnector:
         return build("gmail", "v1", credentials=creds)
 
     def _get_client_secret(self) -> str:
-        """Extract client secret from JSON file."""
+        """Extract client secret from JSON file or environment variable."""
         import json
 
+        # Option 1: Env Var (Preferred for deployment)
+        if self.config.gmail_client_secret:
+            return self.config.gmail_client_secret
+
+        # Option 2: File (Local development)
         if not self.config.gmail_client_secret_file.exists():
+            # If both are missing, raise error
             raise FileNotFoundError(
-                f"Gmail client secret file not found: {self.config.gmail_client_secret_file}"
+                f"Gmail client secret not found in env vars or file: {self.config.gmail_client_secret_file}"
             )
 
         with open(self.config.gmail_client_secret_file, "r") as f:

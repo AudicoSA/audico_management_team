@@ -42,7 +42,7 @@ class Config(BaseSettings):
 
     # Gmail Configuration
     gmail_client_id: str = "261944794374-odd129phrcv8l0k4nd5l9c3qokukesj9.apps.googleusercontent.com"
-    gmail_client_secret: str = ""  # From client_secret JSON file
+    gmail_client_secret: Optional[str] = None  # LOADED FROM ENV or File
     gmail_refresh_token: Optional[str] = None
 
     # Supabase Configuration
