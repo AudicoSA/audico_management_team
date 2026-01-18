@@ -7,7 +7,16 @@ import 'dotenv/config';
 // @ts-ignore
 // import { chromium as playwrightChromium } from 'playwright-extra';
 // import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page, BrowserContext, chromium as playwrightChromium } from 'playwright';
+// import { Browser, Page, BrowserContext, chromium as playwrightChromium } from 'playwright';
+import { Browser, Page, BrowserContext } from 'playwright'; // Types only
+let playwrightChromium: any;
+try {
+  console.log('DEBUG: Attempting to load playwright...');
+  playwrightChromium = require('playwright').chromium;
+  console.log('DEBUG: Playwright loaded successfully');
+} catch (error) {
+  console.error('CRITICAL: Failed to load playwright module:', error);
+}
 import * as path from 'path';
 import * as fs from 'fs';
 import {
