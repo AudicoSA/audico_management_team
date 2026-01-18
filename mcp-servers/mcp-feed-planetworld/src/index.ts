@@ -506,26 +506,31 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
     // Get initial product count
     previousProductCount = await this.getProductLinkCount(page);
+    logger.info(`📦 Initial product count: ${previousProductCount}`);
 
     while (scrollCount < maxScrolls) {
-      // Scroll gradually to bottom (incrementally rather than instant jump)
+      // Scroll gradually to bottom in steps (incrementally rather than instant jump)
       // This helps trigger intersection observers more reliably
+      const scrollDistance = await page.evaluate(() => {
+        const maxScroll = document.body.scrollHeight - window.innerHeight;
+        const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
+        return maxScroll - currentScroll;
+      });
+
+      // Do gradual scrolling in chunks of 500px with small delays
+      const scrollStep = 500;
+      const stepsNeeded = Math.ceil(scrollDistance / scrollStep);
+      
+      for (let step = 0; step < stepsNeeded && step < 10; step++) {
+        await page.evaluate((stepSize) => {
+          window.scrollBy(0, stepSize);
+        }, scrollStep);
+        await this.sleep(100); // Small delay between scroll steps
+      }
+
+      // Final scroll to ensure we're at the bottom
       await page.evaluate(() => {
-        const scrollStep = 500;
-        const scrollInterval = setInterval(() => {
-          const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
-          const maxScroll = document.body.scrollHeight - window.innerHeight;
-          
-          if (currentScroll >= maxScroll - 100) {
-            clearInterval(scrollInterval);
-            window.scrollTo(0, document.body.scrollHeight);
-          } else {
-            window.scrollBy(0, scrollStep);
-          }
-        }, 100);
-        
-        // Safety timeout
-        setTimeout(() => clearInterval(scrollInterval), 5000);
+        window.scrollTo(0, document.body.scrollHeight);
       });
 
       scrollCount++;
