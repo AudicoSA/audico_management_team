@@ -210,13 +210,15 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         (window as any).chrome = { runtime: {} };
       });
 
-      // Enable request/response logging to discover JSON API endpoints (Phase 0)
-      const apiRequests: Array<{ url: string, method: string, status: number, responseSize: number }> = [];
+      // Enable request/response logging to discover JSON API endpoints
+      // Track both URLs and response bodies to capture all product IDs
+      const apiRequests: Array<{ url: string, method: string, status: number, responseSize: number, body?: string }> = [];
+      const productIds = new Set<number>();
 
       page.on('response', async (response) => {
         const url = response.url();
         // Log all XHR/fetch API calls
-        if (url.includes('planetworld.co.za') && (url.includes('.json') || url.includes('api') || url.includes('productid') || url.includes('search') || url.includes('browse'))) {
+        if (url.includes('planetworld.co.za') && (url.includes('.json') || url.includes('api') || url.includes('productid') || url.includes('search') || url.includes('browse') || url.includes('seo-product'))) {
           try {
             const body = await response.text();
             apiRequests.push({
@@ -224,11 +226,37 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
               method: response.request().method(),
               status: response.status(),
               responseSize: body.length,
+              body: body.length < 500000 ? body : undefined, // Store body if reasonable size
             });
-            logger.info(`🌐 API Call: ${response.request().method()} ${url} → ${response.status()} (${body.length} bytes)`);
-            if (body.length > 0 && body.length < 50000) {
-              logger.info(`   Response preview: ${body.substring(0, 200)}`);
+            
+            // Parse product IDs from URL
+            const urlMatches = url.matchAll(/[?&]ids=([0-9]+)/g);
+            for (const match of urlMatches) {
+              if (match[1]) {
+                productIds.add(parseInt(match[1]));
+              }
             }
+
+            // Also parse product IDs from response body (JSON array of products)
+            if (body.length > 0 && body.length < 500000 && body.trim().startsWith('[')) {
+              try {
+                const jsonData = JSON.parse(body);
+                if (Array.isArray(jsonData)) {
+                  for (const item of jsonData) {
+                    if (item.ProductId) {
+                      productIds.add(parseInt(item.ProductId));
+                    }
+                    if (item.id) {
+                      productIds.add(parseInt(item.id));
+                    }
+                  }
+                }
+              } catch (e) {
+                // Not JSON or parse failed, continue
+              }
+            }
+
+            logger.info(`🌐 API Call: ${response.request().method()} ${url} → ${response.status()} (${body.length} bytes, ${productIds.size} total IDs)`);
           } catch (e) {
             // Ignore binary/image responses
           }
@@ -248,9 +276,10 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Dismiss popups
       await this.dismissPopups(page);
 
-      // Use infinite scroll for Klipsch category page (lazy loading)
-      // Scroll aggressively to load all products (minimum 20 scrolls even for small limits)
-      const maxScrolls = Math.max(20, options?.limit ? Math.ceil(options.limit / 5) : 50);
+      // Use infinite scroll to load all products
+      // Scroll more aggressively to ensure all products are loaded via API calls
+      const maxScrolls = Math.max(30, options?.limit ? Math.ceil(options.limit / 3) : 100);
+      logger.info(`📜 Starting infinite scroll (max ${maxScrolls} scrolls)...`);
       const totalScrolls = await this.infiniteScroll(page, maxScrolls);
       logger.info(`✅ Completed ${totalScrolls} scrolls`);
 
@@ -266,31 +295,13 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         logger.info(`📸 Screenshot saved to debug-klipsch-page.png`);
       }
 
-      // NEW APPROACH: Extract product IDs from page and use API directly
+      // Extract product IDs from API calls (already collected in response listener above)
       logger.info('🔍 Extracting product IDs from API calls...');
-
-      // Extract product IDs from the logged API requests
-      const productIds = new Set<number>();
-      for (const req of apiRequests) {
-        // Parse IDs from Google Analytics tracking calls or SEO calls
-        // URL format: .../list?ids=2&ids=4&ids=5...
-        // Regex to find all occurrences of ids=NUMBER
-        const matches = req.url.matchAll(/[?&]ids=([0-9]+)/g);
-        for (const match of matches) {
-          if (match[1]) {
-            productIds.add(parseInt(match[1]));
-          }
-        }
-
-        // Also check for comma separated productIds if that format still exists elsewhere
-        const legacyMatch = req.url.match(/productIds=([0-9,]+)/);
-        if (legacyMatch) {
-          const ids = legacyMatch[1].split(',').map(id => parseInt(id));
-          ids.forEach(id => productIds.add(id));
-        }
-      }
-
-      logger.info(`✅ Found ${productIds.size} product IDs from API tracking`);
+      
+      // Wait a bit more to ensure all API responses are captured
+      await this.sleep(2000);
+      
+      logger.info(`✅ Found ${productIds.size} product IDs from API tracking (${apiRequests.length} API requests captured)`);
 
       // Collect DOM links to compare
       const productLinks = await this.collectProductLinks(page, options?.limit || 10000);
@@ -542,8 +553,8 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         // Network idle timeout is okay, continue
       }
       
-      // Additional wait for content rendering
-      await this.sleep(2000);
+      // Wait for network activity to complete and content to render
+      await this.sleep(3000); // Increased wait to allow API calls to complete
 
       // Check current product count (more reliable than page height)
       const currentProductCount = await this.getProductLinkCount(page);
