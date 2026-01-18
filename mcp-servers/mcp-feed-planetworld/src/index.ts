@@ -284,7 +284,8 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       logger.info(`✅ Completed ${totalScrolls} scrolls`);
 
       // Try clicking Load More buttons (some pages have both)
-      const totalClicks = await this.clickLoadMoreButtons(page, 5);
+      // Increase max clicks to ensure we capture all products
+      const totalClicks = await this.clickLoadMoreButtons(page, 50);
       if (totalClicks > 0) {
         logger.info(`✅ Also clicked ${totalClicks} Load More buttons`);
       }
@@ -300,6 +301,53 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       
       // Wait a bit more to ensure all API responses are captured (especially from Load More clicks)
       await this.sleep(3000);
+
+      // DIRECT API DISCOVERY: Try fetching product catalog directly from known API endpoints
+      // This bypasses scroll/DOM issues entirely
+      logger.info('🔍 Attempting direct API discovery for product catalog...');
+      try {
+        // Common storefront API patterns - try multiple endpoints
+        const discoveryEndpoints = [
+          '/api/store/seo-product/list?limit=1000',
+          '/api/store/products?limit=1000',
+          '/api/products?limit=500',
+          '/api/store/search?limit=500',
+        ];
+
+        for (const endpoint of discoveryEndpoints) {
+          try {
+            const discoveryUrl = `${this.config.baseUrl}${endpoint}`;
+            const response = await fetch(discoveryUrl, {
+              headers: {
+                'User-Agent': this.config.userAgent,
+                'Accept': 'application/json',
+                'Referer': fullUrl,
+              }
+            });
+
+            if (response.ok) {
+              const text = await response.text();
+              if (text.trim().startsWith('[') || text.trim().startsWith('{')) {
+                const data = JSON.parse(text);
+                const items = Array.isArray(data) ? data : (data.products || data.items || data.data || []);
+
+                if (Array.isArray(items) && items.length > 0) {
+                  for (const item of items) {
+                    if (item.ProductId) productIds.add(parseInt(item.ProductId));
+                    if (item.id) productIds.add(parseInt(item.id));
+                    if (item.product_id) productIds.add(parseInt(item.product_id));
+                  }
+                  logger.info(`✅ Direct API discovery: Found ${items.length} products from ${endpoint} (${productIds.size} total IDs)`);
+                }
+              }
+            }
+          } catch (e) {
+            // Endpoint not available, continue
+          }
+        }
+      } catch (e) {
+        logger.info('ℹ️ Direct API discovery did not find additional products');
+      }
       
       // Log details about captured API requests
       const apiCallsWithProducts = apiRequests.filter(req => req.body && req.body.includes('ProductId'));
@@ -607,15 +655,15 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         return maxScroll - currentScroll;
       });
 
-      // Do gradual scrolling in chunks of 500px with small delays
-      const scrollStep = 500;
+      // Do gradual scrolling in chunks of 300px with longer delays to trigger intersection observers
+      const scrollStep = 300;
       const stepsNeeded = Math.ceil(scrollDistance / scrollStep);
-      
-      for (let step = 0; step < stepsNeeded && step < 10; step++) {
+
+      for (let step = 0; step < stepsNeeded && step < 15; step++) {
         await page.evaluate((stepSize) => {
           window.scrollBy(0, stepSize);
         }, scrollStep);
-        await this.sleep(100); // Small delay between scroll steps
+        await this.sleep(350); // Longer delay between scroll steps for intersection observers
       }
 
       // Final scroll to ensure we're at the bottom
@@ -633,7 +681,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       }
       
       // Wait for network activity to complete and content to render
-      await this.sleep(3000); // Increased wait to allow API calls to complete
+      await this.sleep(4000); // Increased wait to allow API calls to complete and products to render
 
       // Check current product count (more reliable than page height)
       const currentProductCount = await this.getProductLinkCount(page);
@@ -720,16 +768,21 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Filter for product detail pages (same logic as collectProductLinks)
       const uniqueUrls = [...new Set(links.map((a: any) => a.href))];
       const filteredUrls = uniqueUrls.filter((url: string) => {
-        if (url.includes('/products/browse/') && !url.includes('productid=')) {
-          return false;
-        }
-        if (/\/products\/[^\/]+$/.test(url) && !url.includes('productid=')) {
-          return false;
-        }
+        // Always include URLs with productid param - these are definite product pages
         if (url.includes('productid=')) {
           return true;
         }
-        return /\/products\/[^\/]+\/.+/.test(url);
+        // Exclude pure category browse pages (no productid)
+        if (url.includes('/products/browse/') && !url.includes('productid=')) {
+          return false;
+        }
+        // Exclude top-level category pages like /products/audio (single segment, no productid)
+        if (/\/products\/[^\/\?]+$/.test(url)) {
+          return false;
+        }
+        // Include product detail pages with slug (e.g., /products/audio/product-name-123)
+        // Also include any URL with query params that might indicate a product
+        return /\/products\/[^\/]+\/.+/.test(url) || url.includes('?');
       });
 
       return filteredUrls.length;
@@ -840,20 +893,21 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       // Filter for product detail pages
       return uniqueUrls.filter((url: string) => {
-        // Exclude category browse pages without productid
-        if (url.includes('/products/browse/') && !url.includes('productid=')) {
-          return false;
-        }
-        // Exclude category pages (only one segment after /products/)
-        if (/\/products\/[^\/]+$/.test(url) && !url.includes('productid=')) {
-          return false;
-        }
-        // Include pages with productid param
+        // Always include URLs with productid param - these are definite product pages
         if (url.includes('productid=')) {
           return true;
         }
-        // Include product detail pages (multiple segments = actual product)
-        return /\/products\/[^\/]+\/.+/.test(url);
+        // Exclude pure category browse pages (no productid)
+        if (url.includes('/products/browse/') && !url.includes('productid=')) {
+          return false;
+        }
+        // Exclude top-level category pages like /products/audio (single segment, no productid)
+        if (/\/products\/[^\/\?]+$/.test(url)) {
+          return false;
+        }
+        // Include product detail pages with slug (e.g., /products/audio/product-name-123)
+        // Also include any URL with query params that might indicate a product
+        return /\/products\/[^\/]+\/.+/.test(url) || url.includes('?');
       });
     });
 
