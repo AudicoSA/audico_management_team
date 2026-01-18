@@ -298,10 +298,89 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Extract product IDs from API calls (already collected in response listener above)
       logger.info('🔍 Extracting product IDs from API calls...');
       
-      // Wait a bit more to ensure all API responses are captured
-      await this.sleep(2000);
+      // Wait a bit more to ensure all API responses are captured (especially from Load More clicks)
+      await this.sleep(3000);
+      
+      // Log details about captured API requests
+      const apiCallsWithProducts = apiRequests.filter(req => req.body && req.body.includes('ProductId'));
+      logger.info(`📊 API Summary: ${apiRequests.length} total requests, ${apiCallsWithProducts.length} with product data`);
+      
+      if (apiCallsWithProducts.length > 0) {
+        // Parse any missed product IDs from stored response bodies
+        for (const req of apiCallsWithProducts) {
+          if (req.body && req.body.trim().startsWith('[')) {
+            try {
+              const jsonData = JSON.parse(req.body);
+              if (Array.isArray(jsonData)) {
+                for (const item of jsonData) {
+                  if (item.ProductId) productIds.add(parseInt(item.ProductId));
+                  if (item.id) productIds.add(parseInt(item.id));
+                }
+              }
+            } catch (e) {
+              // Parse failed, continue
+            }
+          }
+        }
+      }
+      
+      // Also extract product IDs directly from DOM (data attributes, hidden inputs, etc.)
+      logger.info('🔍 Extracting product IDs from DOM elements...');
+      const domProductIds = await page.evaluate(() => {
+        const ids = new Set<number>();
+        
+        // Check for data-product-id, data-id, data-productid attributes
+        const productElements = document.querySelectorAll('[data-product-id], [data-id], [data-productid], [data-product-id], .product-item, .product-card');
+        productElements.forEach((el: any) => {
+          const id = el.getAttribute('data-product-id') || el.getAttribute('data-id') || el.getAttribute('data-productid');
+          if (id) {
+            const numId = parseInt(id);
+            if (!isNaN(numId)) ids.add(numId);
+          }
+        });
+        
+        // Check for product IDs in href parameters
+        const links = document.querySelectorAll('a[href*="productid="], a[href*="/products/"]');
+        links.forEach((link: any) => {
+          const href = link.href;
+          // Extract from ?productid=123
+          const productIdMatch = href.match(/[?&]productid=(\d+)/);
+          if (productIdMatch && productIdMatch[1]) {
+            ids.add(parseInt(productIdMatch[1]));
+          }
+          // Extract from /products/.../product-slug format (might have ID in data)
+          const parent = link.closest('[data-product-id], [data-id]');
+          if (parent) {
+            const id = (parent as any).getAttribute('data-product-id') || (parent as any).getAttribute('data-id');
+            if (id) {
+              const numId = parseInt(id);
+              if (!isNaN(numId)) ids.add(numId);
+            }
+          }
+        });
+        
+        // Check for hidden input fields with product IDs
+        const hiddenInputs = document.querySelectorAll('input[type="hidden"][name*="product"], input[type="hidden"][name*="id"]');
+        hiddenInputs.forEach((input: any) => {
+          const value = input.value;
+          if (value && /^\d+$/.test(value)) {
+            ids.add(parseInt(value));
+          }
+        });
+        
+        return Array.from(ids);
+      });
+      
+      domProductIds.forEach(id => productIds.add(id));
+      logger.info(`📋 Found ${domProductIds.length} product IDs from DOM (${productIds.size} total from all sources)`);
       
       logger.info(`✅ Found ${productIds.size} product IDs from API tracking (${apiRequests.length} API requests captured)`);
+      
+      // Debug: Show some sample product IDs if we have them
+      if (productIds.size > 0 && productIds.size <= 50) {
+        const sampleIds = Array.from(productIds).slice(0, 10);
+        logger.info(`📋 Sample Product IDs: ${sampleIds.join(', ')}`);
+      }
 
       // Collect DOM links to compare
       const productLinks = await this.collectProductLinks(page, options?.limit || 10000);
@@ -685,9 +764,9 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             logger.info(`📱 Clicked Load More button #${clickCount}`);
             buttonFound = true;
 
-            // Wait for content to load
-            await page.waitForLoadState('networkidle').catch(() => { });
-            await this.sleep(800);
+            // Wait for content to load - increase wait time to ensure API responses are captured
+            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
+            await this.sleep(2000); // Increased wait to allow API responses to complete
             break;
           }
         } catch {
