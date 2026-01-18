@@ -217,8 +217,25 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
       page.on('response', async (response) => {
         const url = response.url();
-        // Log all XHR/fetch API calls
-        if (url.includes('planetworld.co.za') && (url.includes('.json') || url.includes('api') || url.includes('productid') || url.includes('search') || url.includes('browse') || url.includes('seo-product'))) {
+        const contentType = response.headers()['content-type'] || '';
+        // Log all XHR/fetch API calls - be more inclusive to catch product data
+        // Include any JSON response or API-like URL from planetworld
+        const isJsonResponse = contentType.includes('application/json');
+        const isApiLikeUrl = url.includes('planetworld.co.za') && (
+          url.includes('.json') ||
+          url.includes('api') ||
+          url.includes('productid') ||
+          url.includes('search') ||
+          url.includes('browse') ||
+          url.includes('seo-product') ||
+          url.includes('product') ||
+          url.includes('catalog') ||
+          url.includes('list') ||
+          url.includes('load') ||
+          url.includes('fetch') ||
+          url.includes('get')
+        );
+        if (url.includes('planetworld.co.za') && (isJsonResponse || isApiLikeUrl)) {
           try {
             const body = await response.text();
             apiRequests.push({
@@ -256,7 +273,9 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
               }
             }
 
-            logger.info(`🌐 API Call: ${response.request().method()} ${url} → ${response.status()} (${body.length} bytes, ${productIds.size} total IDs)`);
+            // Log more details including content type for debugging
+            const shortUrl = url.length > 100 ? url.substring(0, 100) + '...' : url;
+            logger.info(`🌐 API [${contentType.split(';')[0]}]: ${response.request().method()} ${shortUrl} → ${response.status()} (${body.length} bytes, ${productIds.size} IDs)`);
           } catch (e) {
             // Ignore binary/image responses
           }
