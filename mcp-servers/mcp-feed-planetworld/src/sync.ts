@@ -5,10 +5,17 @@
  */
 
 import 'dotenv/config';
+console.log('DEBUG: sync.ts started execution');
 import { PlanetWorldMCPServer } from './index';
 import { logger } from '@audico/shared';
 
+process.on('uncaughtException', (err) => {
+  console.error('CRITICAL: Uncaught exception:', err);
+  process.exit(1);
+});
+
 async function main() {
+  console.log('DEBUG: Entering main function');
   const args = process.argv.slice(2);
 
   // Parse options
