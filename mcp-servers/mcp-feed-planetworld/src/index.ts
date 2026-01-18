@@ -5,9 +5,9 @@
 
 import 'dotenv/config';
 // @ts-ignore
-import { chromium as playwrightChromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page, BrowserContext } from 'playwright';
+// import { chromium as playwrightChromium } from 'playwright-extra';
+// import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { Browser, Page, BrowserContext, chromium as playwrightChromium } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
 import {
@@ -25,7 +25,7 @@ import {
 import { PartalSupabaseService } from './supabase_local';
 
 // Add stealth plugin to avoid bot detection
-playwrightChromium.use(StealthPlugin());
+// playwrightChromium.use(StealthPlugin());
 
 // ============================================
 // PLANET WORLD TYPES
