@@ -295,6 +295,70 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Dismiss popups
       await this.dismissPopups(page);
 
+      // STRATEGY: Since load-more gets 403, iterate through manufacturer filters
+      // Each manufacturer has a smaller product set that may be fully visible
+      logger.info('🏭 Extracting manufacturer IDs for pagination strategy...');
+      const manufacturerIds = await page.evaluate(() => {
+        const ids = new Set<string>();
+        // Find all links with manufacturerids parameter
+        const links = document.querySelectorAll('a[href*="manufacturerids="]');
+        links.forEach((link: any) => {
+          const href = link.href || '';
+          const match = href.match(/manufacturerids=(\d+)/);
+          if (match && match[1]) {
+            ids.add(match[1]);
+          }
+        });
+        return Array.from(ids);
+      });
+      logger.info(`📋 Found ${manufacturerIds.length} manufacturers to iterate`);
+
+      // Collect products from each manufacturer page
+      const allProductUrls = new Set<string>();
+      const categoryId = '690'; // Main category with all products
+
+      // First, collect from the main page (initial load)
+      const initialUrls = await this.collectProductLinksFromCurrentPage(page);
+      initialUrls.forEach(url => allProductUrls.add(url));
+      logger.info(`📦 Initial page: ${initialUrls.length} products (${allProductUrls.size} total)`);
+
+      // Then iterate through each manufacturer
+      for (let i = 0; i < manufacturerIds.length; i++) {
+        const manufacturerId = manufacturerIds[i];
+        const filterUrl = `${this.config.baseUrl}${this.config.productsUrl}?categoryids=${categoryId}&manufacturerids=${manufacturerId}`;
+
+        try {
+          logger.info(`🏭 [${i + 1}/${manufacturerIds.length}] Loading manufacturer ${manufacturerId}...`);
+          await page.goto(filterUrl, { waitUntil: 'networkidle', timeout: 20000 });
+          await page.waitForTimeout(1500);
+
+          // Do some scrolling to load more products if any
+          await this.infiniteScroll(page, 10);
+
+          // Collect product URLs from this filtered view
+          const urls = await this.collectProductLinksFromCurrentPage(page);
+          urls.forEach(url => allProductUrls.add(url));
+
+          if ((i + 1) % 10 === 0 || i === manufacturerIds.length - 1) {
+            logger.info(`📦 After ${i + 1} manufacturers: ${allProductUrls.size} unique products`);
+          }
+
+          // Small delay between requests
+          await this.sleep(500);
+        } catch (e: any) {
+          logger.warn(`⚠️ Failed to load manufacturer ${manufacturerId}: ${e.message}`);
+        }
+      }
+
+      logger.info(`✅ Manufacturer iteration complete: ${allProductUrls.size} unique product URLs`);
+
+      // Convert URLs to product links for further processing
+      const productLinksFromManufacturers = Array.from(allProductUrls);
+
+      // Also do standard scroll/load-more on main page as backup
+      await page.goto(fullUrl, { waitUntil: 'networkidle', timeout: 30000 });
+      await page.waitForTimeout(2000);
+
       // Use infinite scroll to load all products
       // Scroll more aggressively to ensure all products are loaded via API calls
       const maxScrolls = Math.max(30, options?.limit ? Math.ceil(options.limit / 3) : 100);
@@ -536,12 +600,17 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       const productLinks = await this.collectProductLinks(page, options?.limit || 10000);
       logger.info(`🔍 Found ${productLinks.length} product links via DOM`);
 
+      // Merge product links from manufacturer iteration with DOM links
+      // productLinksFromManufacturers was populated earlier during manufacturer iteration
+      const allUniqueProductLinks = new Set<string>([...productLinksFromManufacturers, ...productLinks]);
+      logger.info(`📊 Total unique product links: ${allUniqueProductLinks.size} (${productLinksFromManufacturers.length} from manufacturers, ${productLinks.length} from DOM)`);
+
       // Decision Logic: Use API if it captured a significant number of products (or more than DOM),
       // otherwise fallback to DOM if API missed them (e.g. Load More didn't trigger API logs correctly).
       let products: PlanetWorldProduct[] = [];
       let apiProducts: PlanetWorldProduct[] = [];
       const apiCount = productIds.size;
-      const domCount = productLinks.length;
+      const domCount = allUniqueProductLinks.size; // Use merged count
 
 
       // Always fetch API products first as a backup (if IDs exist)
@@ -572,7 +641,9 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             throw new Error('No product links found via DOM or API - check selectors and page load');
           }
         } else {
-          products = await this.scrapeProductDetails(page, productLinks, options?.dryRun);
+          // Use the merged unique links from manufacturer iteration + DOM
+          const linksToScrape = Array.from(allUniqueProductLinks);
+          products = await this.scrapeProductDetails(page, linksToScrape, options?.dryRun);
 
           // Safety Net: If DOM scraping failed to extract DETAILS (length 0), fallback to API
           if (products.length === 0 && apiProducts.length > 0) {
@@ -936,6 +1007,27 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
     }
 
     return clickCount;
+  }
+
+  // Helper to collect product links from current page state (no scrolling/waiting)
+  private async collectProductLinksFromCurrentPage(page: Page): Promise<string[]> {
+    return await page.evaluate(() => {
+      const links: string[] = [];
+      // Look for product links with productid parameter (definite product pages)
+      const productLinks = document.querySelectorAll('a[href*="productid="], a[href*="/products/"][href*="/"]');
+
+      productLinks.forEach((link: any) => {
+        const href = link.href;
+        if (href && (href.includes('productid=') || /\/products\/[^\/]+\/.+/.test(href))) {
+          // Exclude category/filter pages
+          if (!href.includes('/browse/') || href.includes('productid=')) {
+            links.push(href);
+          }
+        }
+      });
+
+      return [...new Set(links)]; // Remove duplicates
+    });
   }
 
   private async collectProductLinks(page: Page, limit: number): Promise<string[]> {
