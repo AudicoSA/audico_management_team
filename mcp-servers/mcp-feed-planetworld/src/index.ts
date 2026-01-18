@@ -321,51 +321,77 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Wait a bit more to ensure all API responses are captured (especially from Load More clicks)
       await this.sleep(3000);
 
-      // DIRECT API DISCOVERY: Try fetching product catalog directly from known API endpoints
-      // This bypasses scroll/DOM issues entirely
-      logger.info('🔍 Attempting direct API discovery for product catalog...');
+      // DIRECT PAGINATION: Use page context to fetch all pages (avoids 403 from Load More)
+      // The /products/load-more endpoint returns 403, so we use browser context to make AJAX calls
+      logger.info('🔍 Attempting direct pagination using browser context...');
       try {
-        // Common storefront API patterns - try multiple endpoints
-        const discoveryEndpoints = [
-          '/api/store/seo-product/list?limit=1000',
-          '/api/store/products?limit=1000',
-          '/api/products?limit=500',
-          '/api/store/search?limit=500',
-        ];
+        const totalPages = Math.ceil(1853 / 16); // ~116 pages based on web fetch info
+        const maxPages = Math.min(totalPages, 120); // Cap at 120 pages
 
-        for (const endpoint of discoveryEndpoints) {
+        for (let pageNum = 2; pageNum <= maxPages; pageNum++) {
           try {
-            const discoveryUrl = `${this.config.baseUrl}${endpoint}`;
-            const response = await fetch(discoveryUrl, {
-              headers: {
-                'User-Agent': this.config.userAgent,
-                'Accept': 'application/json',
-                'Referer': fullUrl,
-              }
-            });
-
-            if (response.ok) {
-              const text = await response.text();
-              if (text.trim().startsWith('[') || text.trim().startsWith('{')) {
-                const data = JSON.parse(text);
-                const items = Array.isArray(data) ? data : (data.products || data.items || data.data || []);
-
-                if (Array.isArray(items) && items.length > 0) {
-                  for (const item of items) {
-                    if (item.ProductId) productIds.add(parseInt(item.ProductId));
-                    if (item.id) productIds.add(parseInt(item.id));
-                    if (item.product_id) productIds.add(parseInt(item.product_id));
-                  }
-                  logger.info(`✅ Direct API discovery: Found ${items.length} products from ${endpoint} (${productIds.size} total IDs)`);
+            // Use page.evaluate to make AJAX call with proper cookies/session
+            const pageProducts = await page.evaluate(async (pn: number) => {
+              const response = await fetch(`/products/load-more?page=${pn}&sortBy=Default`, {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                  'Accept': 'text/html, */*; q=0.01',
+                  'X-Requested-With': 'XMLHttpRequest',
                 }
+              });
+
+              if (!response.ok) {
+                return { error: response.status, html: '' };
               }
+
+              const html = await response.text();
+              // Extract product IDs from the HTML response
+              const ids: number[] = [];
+              const idMatches = html.matchAll(/data-id="(\d+)"/g);
+              for (const match of idMatches) {
+                if (match[1]) ids.push(parseInt(match[1]));
+              }
+              // Also try productid in URLs
+              const urlMatches = html.matchAll(/productid=(\d+)/gi);
+              for (const match of urlMatches) {
+                if (match[1]) ids.push(parseInt(match[1]));
+              }
+              return { error: null, ids, count: ids.length };
+            }, pageNum);
+
+            if (pageProducts.error) {
+              if (pageProducts.error === 403) {
+                logger.warn(`⚠️ Page ${pageNum} returned 403 - site may be blocking requests`);
+                // Try a small delay and continue
+                await this.sleep(2000);
+                continue;
+              }
+              break;
             }
+
+            if (pageProducts.ids && pageProducts.ids.length > 0) {
+              for (const id of pageProducts.ids) {
+                productIds.add(id);
+              }
+              if (pageNum % 10 === 0) {
+                logger.info(`📄 Page ${pageNum}: Found ${pageProducts.count} products (${productIds.size} total IDs)`);
+              }
+            } else {
+              // No more products
+              logger.info(`📄 Page ${pageNum}: No more products found, stopping pagination`);
+              break;
+            }
+
+            // Small delay to avoid rate limiting
+            await this.sleep(500);
           } catch (e) {
-            // Endpoint not available, continue
+            logger.warn(`⚠️ Error fetching page ${pageNum}, continuing...`);
           }
         }
+        logger.info(`✅ Direct pagination complete: ${productIds.size} total product IDs`);
       } catch (e) {
-        logger.info('ℹ️ Direct API discovery did not find additional products');
+        logger.info('ℹ️ Direct pagination failed, falling back to captured data');
       }
       
       // Log details about captured API requests
