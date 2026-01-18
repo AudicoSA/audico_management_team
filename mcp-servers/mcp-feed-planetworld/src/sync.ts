@@ -53,10 +53,20 @@ async function main() {
 
   // Get current status
   logger.info('\nStep 2: Checking current status...');
-  const status = await server.getStatus();
-  logger.info(`Current products in database: ${status.total_products}`);
-  if (status.last_sync) {
-    logger.info(`Last sync: ${status.last_sync.toLocaleString()}`);
+  try {
+    const status = await server.getStatus();
+    logger.info(`Current products in database: ${status.total_products}`);
+    if (status.last_sync) {
+      logger.info(`Last sync: ${status.last_sync.toLocaleString()}`);
+    }
+    if (status.status === 'error' && status.error_message) {
+      logger.warn(`⚠️  Previous sync had error: ${status.error_message}`);
+      logger.info('Proceeding with new sync attempt...');
+    }
+  } catch (error: any) {
+    logger.error(`❌ Failed to get status: ${error.message}`);
+    logger.error(`Stack trace: ${error.stack}`);
+    logger.info('Attempting to proceed with sync anyway...');
   }
 
   // Sync products
