@@ -299,29 +299,46 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
       // Decision Logic: Use API if it captured a significant number of products (or more than DOM),
       // otherwise fallback to DOM if API missed them (e.g. Load More didn't trigger API logs correctly).
       let products: PlanetWorldProduct[] = [];
+      let apiProducts: PlanetWorldProduct[] = [];
       const apiCount = productIds.size;
       const domCount = productLinks.length;
+
+
+      // Always fetch API products first as a backup (if IDs exist)
+      if (apiCount > 0) {
+        try {
+          apiProducts = await this.fetchProductsViaAPI(Array.from(productIds), options?.dryRun);
+        } catch (e) {
+          logger.warn('⚠️ Failed to fetch backup API products');
+        }
+      }
 
       // If API found more or equal, OR if API found a "reasonable" amount (e.g. > 20) and DOM suggests the same order of magnitude
       // Actually, simplest heuristic: Use whichever is larger.
       if (apiCount >= domCount && apiCount > 0) {
         logger.info(`🚀 Using API method (${apiCount} IDs >= ${domCount} DOM links)`);
-        products = await this.fetchProductsViaAPI(Array.from(productIds), options?.dryRun);
+        products = apiProducts;
         logger.info(`✅ Fetched ${products.length} products via API`);
       } else {
         // Fallback to DOM scraping
         logger.warn(`⚠️  Preferring DOM scraping (${domCount} links > ${apiCount} API IDs)`);
 
         if (domCount === 0) {
-          if (apiCount > 0) {
+          if (apiProducts.length > 0) {
             // If DOM found 0, but API found some, use API (edge case)
-            logger.info(`⚠️  DOM found 0, reverting to API (${apiCount} IDs)`);
-            products = await this.fetchProductsViaAPI(Array.from(productIds), options?.dryRun);
+            logger.info(`⚠️  DOM found 0 links, reverting to API (${apiProducts.length} products)`);
+            products = apiProducts;
           } else {
             throw new Error('No product links found via DOM or API - check selectors and page load');
           }
         } else {
           products = await this.scrapeProductDetails(page, productLinks, options?.dryRun);
+
+          // Safety Net: If DOM scraping failed to extract DETAILS (length 0), fallback to API
+          if (products.length === 0 && apiProducts.length > 0) {
+            logger.warn(`🚨 DOM scraping found links but extracted 0 products (selector mismatch?). Reverting to API (${apiProducts.length} products).`);
+            products = apiProducts;
+          }
         }
       }
 
@@ -749,17 +766,29 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
         // Extract product data using JavaScript
         const productData = await page.evaluate((productUrl: string) => {
           // Name
-          const name = (document.querySelector('h1') as any)?.textContent?.trim() || '';
+          const name = (document.querySelector('h1') as any)?.textContent?.trim() ||
+            (document.querySelector('.product-name') as any)?.textContent?.trim() ||
+            (document.querySelector('.product-title') as any)?.textContent?.trim() ||
+            '';
 
           // SKU
           let sku = '';
-          const skuSelectors = ['[data-testid*="sku"]', '.sku', '.product-sku'];
+          const skuSelectors = ['[data-testid*="sku"]', '.sku', '.product-sku', '.product_sku', 'span[itemprop="sku"]', '#sku'];
 
           for (const selector of skuSelectors) {
             const skuEl = document.querySelector(selector) as any;
             if (skuEl) {
               sku = (skuEl.textContent || '').replace(/SKU:\s*/i, '').trim();
               break;
+            }
+          }
+
+          if (!sku) {
+            // Try looking for "Product Code"
+            const bodyText = (document.body as any).textContent || '';
+            const codeMatch = bodyText.match(/Product Code:\s*([^\s\n]+)/i);
+            if (codeMatch) {
+              sku = codeMatch[1].trim();
             }
           }
 
