@@ -194,6 +194,7 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           '--disable-blink-features=AutomationControlled',
           '--no-sandbox',
           '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
         ],
       });
 
