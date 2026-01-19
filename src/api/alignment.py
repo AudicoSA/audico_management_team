@@ -34,7 +34,6 @@ async def get_unmatched_products(limit: int = 20):
     sb = get_supabase_connector()
     
     try:
-    try:
         # 1. Get all matched IDs first
         # Note: distinct() is good practice here if one product could match multiple (though unlikely in current schema)
         matches = sb.client.table("product_matches").select("internal_product_id").execute()
