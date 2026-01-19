@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link2, AlertCircle, Check, X, Search, PlusCircle, ArrowRight } from 'lucide-react'
 
+import { useRouter } from 'next/navigation'
+
 // Types
 interface SupplierProduct {
     id: string
@@ -31,6 +33,7 @@ interface Candidate {
 }
 
 export default function AlignmentPage() {
+    const router = useRouter()
     const [unmatched, setUnmatched] = useState<SupplierProduct[]>([])
     const [selectedProduct, setSelectedProduct] = useState<SupplierProduct | null>(null)
     const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -147,7 +150,9 @@ export default function AlignmentPage() {
                 setUnmatched(prev => prev.filter(p => p.id !== selectedProduct.id))
                 setSelectedProduct(null)
                 setCandidates([])
-                alert("Product added to New Products Queue!")
+
+                // Redirect instead of alert
+                router.push('/products/new')
             } catch (error) {
                 alert('Failed to create product')
                 console.error(error)

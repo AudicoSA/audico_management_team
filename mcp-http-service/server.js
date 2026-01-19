@@ -38,7 +38,7 @@ const MCP_SERVERS = {
     'smart-homes': { path: 'mcp-feed-smart-homes', name: 'Smart Homes' },
     'connoisseur': { path: 'mcp-feed-connoisseur', name: 'Connoisseur' },
     'proaudio': { path: 'mcp-feed-proaudio', name: 'ProAudio' },
-    'planetworld': { path: 'mcp-feed-planetworld', name: 'Planet World' },
+
 };
 
 /**
@@ -62,10 +62,14 @@ async function runMCPSync(serverKey, sessionId = null) {
 
         // DEBUG: Read the file content to verify deployment
         try {
-            const fs = await import('fs');
-            const content = fs.readFileSync(syncScriptPath, 'utf8');
-            console.log(`[${server.name}] Script preview:\n${content.slice(0, 300)}`);
-            stdout += `\n--- SCRIPT PREVIEW ---\n${content.slice(0, 300)}\n----------------------\n`;
+            const fs = require('fs');
+            if (fs.existsSync(syncScriptPath)) {
+                const content = fs.readFileSync(syncScriptPath, 'utf8');
+                console.log(`[${server.name}] Script preview:\n${content.slice(0, 300)}`);
+                stdout += `\n--- SCRIPT PREVIEW ---\n${content.slice(0, 300)}\n----------------------\n`;
+            } else {
+                stdout += `\nERROR: Script file not found at ${syncScriptPath}\n`;
+            }
         } catch (err) {
             console.error(`[${server.name}] Failed to read script:`, err);
             stdout += `\nFailed to read script: ${err.message}\n`;

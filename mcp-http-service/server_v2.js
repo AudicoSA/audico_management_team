@@ -50,7 +50,7 @@ const MCP_SERVERS = {
     'smart-homes': { path: 'mcp-feed-smart-homes', name: 'Smart Homes' },
     'connoisseur': { path: 'mcp-feed-connoisseur', name: 'Connoisseur' },
     'proaudio': { path: 'mcp-feed-proaudio', name: 'ProAudio' },
-    'planetworld': { path: 'mcp-feed-planetworld', name: 'Planet World' },
+
 };
 
 /**

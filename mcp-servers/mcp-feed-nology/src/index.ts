@@ -345,7 +345,7 @@ export class NologyMCPServer implements MCPSupplierTool {
 
       // Build #10: Consultation mode auto-tagging
       scenario_tags: autoTags.scenario_tags,
-      mounting_type: autoTags.mounting_type,
+      mounting_type: autoTags.mounting_type || undefined,
       exclude_from_consultation: autoTags.exclude_from_consultation,
     };
   }

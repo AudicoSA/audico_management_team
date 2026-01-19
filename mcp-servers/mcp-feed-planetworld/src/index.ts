@@ -454,6 +454,66 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 
 
 
+
+  private async capturePricingStock(page: Page, timeoutMs = 5000): Promise<{ price: number; inStock: boolean; sku?: string, found: boolean }> {
+    try {
+      // Capture the first JSON-ish XHR/fetch response that likely contains pricing/stock.
+      const res = await page.waitForResponse((r: any) => {
+        const rt = r.request().resourceType();
+        const url = r.url().toLowerCase();
+
+        // Target specific known endpoints
+        const knownEndpoints = [
+          'api/store/seo-product/list', // Comprehensive (Price, StockQty, Sku)
+          'ajax/pricestock',            // Real-time (RetailPriceIncl, TotalStock)
+          'ajax/getproductextra'
+        ];
+
+        const isKnownEndpoint = knownEndpoints.some(ep => url.includes(ep));
+
+        // Also look for generic signals if specific endpoints change
+        const genericSignal = (rt === 'xhr' || rt === 'fetch') &&
+          (url.includes('product') || url.includes('price') || url.includes('stock')) &&
+          !url.includes('.js') && !url.includes('.css');
+
+        return isKnownEndpoint || genericSignal;
+      }, { timeout: timeoutMs });
+
+      const bodyText = await res.text();
+      let data: any = null;
+      try { data = JSON.parse(bodyText); } catch { return { price: 0, inStock: false, found: false }; }
+
+      // Strategy 1: SEO Product List (Array)
+      if (Array.isArray(data) && data.length > 0 && data[0].Price) {
+        const p = data[0];
+        return {
+          price: parseFloat(p.Price),
+          inStock: (p.StockQty && parseFloat(p.StockQty) > 0) || p.HasStock === 'InStock',
+          sku: p.Sku,
+          found: true
+        };
+      }
+
+      // Strategy 2: PriceStock (Object)
+      if (data.RetailPriceIncl) {
+        // "R12,999.00"
+        const priceStr = data.RetailPriceIncl.replace(/[^0-9.]/g, '');
+        const stock = data.TotalStock ? parseFloat(data.TotalStock) : 0;
+        return {
+          price: parseFloat(priceStr),
+          inStock: stock > 0,
+          found: true
+        };
+      }
+
+      return { price: 0, inStock: false, found: false };
+
+    } catch (e) {
+      // Timeout or error
+      return { price: 0, inStock: false, found: false };
+    }
+  }
+
   private async scrapeProductDetails(
     page: Page,
     productLinks: string[],
@@ -471,12 +531,22 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
           logger.info(`📦 Progress: ${i}/${productLinks.length} products`);
         }
 
+        // START NETWORK LISTENER BEFORE NAVIGATION
+        const networkPromise = this.capturePricingStock(page, 5000);
+
         await page.goto(url, {
           waitUntil: 'domcontentloaded',
           timeout: 10000,
         });
 
-        // Extract product data using JavaScript
+        // Await the network result (it might clear quickly or timeout)
+        const networkData = await networkPromise;
+        if (networkData.found) {
+          if (dryRun) logger.info(`⚡ API Intercept: Price R${networkData.price}, Stock: ${networkData.inStock} (${url})`);
+        }
+
+        // Extract product data using JavaScript (DOM Fallback/Complement)
+        // We still need Name, Brand, Image from DOM usually
         const productData = await page.evaluate((productUrl: string) => {
           // Name
           const name = (document.querySelector('h1') as any)?.textContent?.trim() ||
@@ -529,66 +599,83 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             }
           }
 
-          // Price
+          // Price (DOM Scrape - Fallback)
           let price = 0;
+          let debugInfo = '';
           const priceSelectors = [
+            '.product-box-price',
             '.price',
             '.product-price',
             '[data-testid*="price"]',
             '.product-info .price',
             'span.price',
-            '.amount'
+            '.amount',
+            'span[itemprop="price"]',
+            '#price'
           ];
 
           for (const selector of priceSelectors) {
             const priceEl = document.querySelector(selector) as any;
             if (priceEl) {
-              const priceText = priceEl.innerText || priceEl.textContent || '';
-              // Robust cleaning: "R 12,999.00" -> "12999.00"
-              // Remove 'R', commas (thousands separator), spaces
-              const cleanText = priceText.replace(/[R\s,]/gi, '').replace(/Price/gi, '');
+              // Get text, but be careful of children like <span class="price-info">
+              // Strategy: Get direct text if possible, or just parse the whole string
+              let text = priceEl.textContent || '';
+
+              debugInfo += ` [Found ${selector}: "${text.substring(0, 50)}..."] `;
+
+              // Remove "RRP Incl VAT" etc
+              text = text.replace(/RRP.*$/, '').replace(/Incl.*$/, '');
+
+              const cleanText = text.replace(/R/gi, '').replace(/,/g, '').replace(/\s/g, '');
               const priceMatch = cleanText.match(/([0-9]+(\.[0-9]+)?)/);
 
               if (priceMatch) {
                 const extracted = parseFloat(priceMatch[1]);
                 if (!isNaN(extracted) && extracted > 0) {
                   price = extracted;
+                  debugInfo += ` [Extracted: ${price}]`;
                   break;
                 }
               }
             }
           }
 
-          // Stock Status - Look for Green Tick (fa-check-circle etc)
-          let inStock = false;
-          // Check for visual indicators as described by user: "Red X (out), Green Tick (in)"
-          // Common icon classes
-          if (document.querySelector('.fa-check') ||
-            document.querySelector('.fa-check-circle') ||
-            document.querySelector('.icon-check') ||
-            document.querySelector('.stock-in') ||
-            document.querySelector('.instock') ||
-            (document.body.innerText.includes('In Stock') && !document.body.innerText.includes('Out of Stock'))) {
+          if (!debugInfo) {
+            debugInfo = `[No selectors matched] Title: ${document.title} BodyStart: ${document.body.innerText.substring(0, 100).replace(/\n/g, ' ')}`;
+          }
+
+          // Stock Status (DOM Scrape - Fallback)
+          let inStock = false; // Default to false
+
+          const bodyText = document.body.innerText.toLowerCase();
+
+          // 1. Check for specific "No Stock" text first (Override check)
+          if (bodyText.includes('no stock') || bodyText.includes('out of stock') || bodyText.includes('sold out')) {
+            inStock = false;
+          } else if (bodyText.includes('in stock') || bodyText.includes('available')) {
             inStock = true;
           }
 
-          // Also check specific "product-stock-status" elements
-          const stockEl = document.querySelector('.product-stock-status') || document.querySelector('.stock-status');
+          // 2. Check specific element text (Higher priority)
+          const stockEl = document.querySelector('.product-stock-status') ||
+            document.querySelector('.stock-status') ||
+            document.querySelector('.item-in-stock');
+
           if (stockEl) {
-            const stockText = stockEl.textContent?.toLowerCase() || '';
+            const stockText = stockEl.textContent?.toLowerCase().trim() || '';
             if (stockText.includes('in stock')) inStock = true;
-            if (stockText.includes('out of stock')) inStock = false;
+            if (stockText.includes('no stock') || stockText.includes('out of stock')) inStock = false;
           }
 
-          // Check for specific icons if present
-          const icons = Array.from(document.querySelectorAll('i, span[class*="icon"]'));
-          for (const icon of icons) {
-            const cls = icon.className.toLowerCase();
-            if (cls.includes('check') || cls.includes('tick')) {
-              if ((icon as HTMLElement).offsetParent !== null) inStock = true;
+          // 3. Icon Check (Highest priority)
+          // <span class="item-in-stock"><i class="fa fa-times"></i>No Stock </span>
+          const stockContainer = document.querySelector('.item-in-stock');
+          if (stockContainer) {
+            if (stockContainer.querySelector('.fa-times') || stockContainer.querySelector('.fa-times-circle')) {
+              inStock = false;
             }
-            if (cls.includes('times') || cls.includes('cross') || cls.includes('x-circle')) {
-              if ((icon as HTMLElement).offsetParent !== null) inStock = false;
+            if (stockContainer.querySelector('.fa-check') || stockContainer.querySelector('.fa-check-circle')) {
+              inStock = true;
             }
           }
 
@@ -618,11 +705,22 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
             image,
             url: productUrl,
             inStock,
+            debugInfo, // Return debug info
           };
         }, url);
 
+        // MERGE DATA: Prefer Network Data over DOM Data
+        if (networkData.found) {
+          productData.price = networkData.price;
+          productData.inStock = networkData.inStock;
+          if (networkData.sku && !productData.sku) {
+            productData.sku = networkData.sku;
+          }
+        }
+
         if (productData.price === 0) {
           logger.warn(`⚠️  Zero price detected for ${productData.sku} (${url})`);
+          logger.warn(`Debug Info: ${productData.debugInfo}`);
         }
 
         if (productData.name && productData.sku) {
@@ -748,3 +846,24 @@ export class PlanetWorldMCPServer implements MCPSupplierTool {
 }
 
 export default PlanetWorldMCPServer;
+
+if (require.main === module) {
+  (async () => {
+    try {
+      const args = process.argv.slice(2);
+      const isDryRun = args.includes('--dry-run');
+
+      const server = new PlanetWorldMCPServer();
+
+      console.log(`Starting PlanetWorld Scraper(Dry Run: ${isDryRun})...`);
+      // We need to enable dryRun param in syncProducts
+      await server.syncProducts({ dryRun: isDryRun });
+
+      console.log('Sync completed.');
+      process.exit(0);
+    } catch (error) {
+      console.error('Fatal error during execution:', error);
+      process.exit(1);
+    }
+  })();
+}
