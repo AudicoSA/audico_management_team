@@ -60,7 +60,26 @@ def setup_scheduler():
         replace_existing=True
     )
 
-    logger.info("scheduler_jobs_configured")
+    # Upload Poller: Every minute
+    scheduler.add_job(
+        run_upload_poller_job,
+        CronTrigger(minute="*"),
+        id="poll_pending_uploads",
+        replace_existing=True
+    )
+
+async def run_upload_poller_job():
+    """Wrapper to run upload poller."""
+    # logger.info("upload_poller_job_started") # Too noisy every minute
+    try:
+        sb = get_supabase_connector()
+        oc = OpenCartConnector()
+        agent = StockListingsAgent(sb, oc)
+        await agent.poll_pending_uploads()
+    except Exception as e:
+        logger.error("upload_poller_job_failed", error=str(e))
+
+
 
 def start_scheduler():
     """Start the scheduler."""

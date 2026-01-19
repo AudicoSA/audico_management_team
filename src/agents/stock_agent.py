@@ -287,6 +287,68 @@ class StockListingsAgent:
         return round(retail_price, 2)
     
 
+
+    async def poll_pending_uploads(self):
+        """Poll and process pending price list uploads."""
+        try:
+            # 1. Fetch pending uploads
+            response = self.supabase.client.table("price_list_uploads")\
+                .select("*")\
+                .eq("status", "pending")\
+                .execute()
+            
+            if not response.data:
+                return
+
+            logger.info("pending_uploads_found", count=len(response.data))
+
+            for upload in response.data:
+                await self._process_single_upload(upload)
+                
+        except Exception as e:
+            logger.error("poll_pending_uploads_failed", error=str(e))
+
+    async def _process_single_upload(self, upload: Dict):
+        """Process a single upload record."""
+        upload_id = upload['id']
+        filename = upload['filename']
+        supplier_name = upload['supplier_name']
+        storage_path = upload['storage_path']
+        instruction = upload.get('instruction', 'retail')
+        markup = upload.get('markup_pct')
+        
+        logger.info("processing_upload", upload_id=upload_id, filename=filename)
+        
+        try:
+            # 1. Mark as processing
+            self.supabase.client.table("price_list_uploads").update({
+                "status": "processing",
+                "started_at": datetime.utcnow().isoformat()
+            }).eq("id", upload_id).execute()
+            
+            # 2. Download file
+            # Bucket is 'invoices' based on frontend code
+            bucket = "invoices" 
+            file_data = self.supabase.client.storage.from_(bucket).download(storage_path)
+            
+            # 3. Process
+            # process_price_list handles completion status updates
+            await self.process_price_list(
+                file_data=file_data,
+                filename=filename,
+                supplier_name=supplier_name,
+                instruction=instruction,
+                upload_id=upload_id,
+                markup_pct=markup
+            )
+            
+        except Exception as e:
+            logger.error("upload_processing_failed", upload_id=upload_id, error=str(e))
+            self.supabase.client.table("price_list_uploads").update({
+                "status": "failed",
+                "error_message": str(e)
+            }).eq("id", upload_id).execute()
+
     async def process_approval_queue(self):
         """Process all products in approved_pending status."""
         try:
