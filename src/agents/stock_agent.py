@@ -341,32 +341,8 @@ class StockListingsAgent:
                 logger.info("product_already_exists_skipping_creation", sku=product['sku'])
                 product_id = existing_product['product_id']
             else:
-                # Construct Name: BRAND MODEL - DESCRIPTION
-                product_name_parts = []
-                
-                # 1. Brand/Manufacturer - Only add if it's NOT already in the name
-                brand_name = None
-                if manufacturer:
-                    brand_name = manufacturer['name']
-                    
-                if brand_name and brand_name.lower() not in product['name'].lower():
-                    product_name_parts.append(brand_name)
-                    
-                # 2. Model (SKU)
-                # Only add SKU if it's not already in the description to avoid redundancy
-                sku = product['sku']
-                if sku and sku.lower() not in product['name'].lower():
-                     product_name_parts.append(sku)
-                
-                # Join Brand and Model
-                prefix = " ".join(product_name_parts)
-                
-                # 3. Description
-                # Use " - " separator if we have a prefix
-                if prefix:
-                    product_name = f"{prefix} - {product['name']}"
-                else:
-                    product_name = product['name']
+                # Simplify Name Logic: Use valid name directly from queue
+                product_name = product['name']
 
                 # Calculate retail price
                 # User indicated they upload as Retail, so treat the stored 'cost_price' as Retail Price

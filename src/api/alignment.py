@@ -164,19 +164,9 @@ async def create_product(request: CreateRequest):
             if sup_res.data:
                 supplier_name = sup_res.data['name']
         
-        # B. Construct Better Name
-        # If we have a description, it might be better than the name (often just SKU)
-        # Strategy: If description exists, use it. But prepend Product Name if it looks like a Brand/Model.
+        # Use Product Name directly as it comes from the feed (e.g. "Ubiquiti UniFi...")
+        # Description often contains HTML or is too long for a name.
         final_name = product.get("product_name")
-        description = product.get("description")
-        
-        if description and len(description) > len(final_name or ""):
-             # Basic clean up of HTML if present (simple check)
-            if "<" not in description: 
-                final_name = description
-            elif final_name == product.get("sku"):
-                 # If name is just SKU, try to extract text from description? Too risky to parse HTML here.
-                 pass
 
         # User Logic: Round cost price to nearest R10 (floor/no cents)
         raw_price = product.get("cost_price") or product.get("selling_price", 0)
