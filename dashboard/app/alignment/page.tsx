@@ -152,7 +152,8 @@ export default function AlignmentPage() {
                 setCandidates([])
 
                 // Redirect instead of alert
-                router.push('/products/new')
+                // router.push('/products/new')
+                alert('Product added to New Products Queue!')
             } catch (error) {
                 alert('Failed to create product')
                 console.error(error)

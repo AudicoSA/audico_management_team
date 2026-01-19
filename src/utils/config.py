@@ -91,7 +91,7 @@ class Config(BaseSettings):
     agent_enabled: dict[str, bool] = {
         "EmailManagementAgent": True,
         "OrdersLogisticsAgent": False,
-        "StockListingsAgent": False,
+        "StockListingsAgent": True,
         "CustomerServiceAgent": False,
         "SocialMediaAgent": False,
     }
