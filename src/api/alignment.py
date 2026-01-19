@@ -34,35 +34,36 @@ async def get_unmatched_products(limit: int = 20):
     sb = get_supabase_connector()
     
     try:
-        # Fetch products including description
-        products = sb.client.table("products")\
+    try:
+        # 1. Get all matched IDs first
+        # Note: distinct() is good practice here if one product could match multiple (though unlikely in current schema)
+        matches = sb.client.table("product_matches").select("internal_product_id").execute()
+        matched_ids = [m['internal_product_id'] for m in matches.data]
+        
+        # 2. Query products NOT in the matched list
+        query = sb.client.table("products")\
             .select("id, sku, product_name, description, selling_price")\
             .order("created_at", desc=True)\
-            .limit(100)\
-            .execute()
-        
-        # Get matches
-        internal_ids = [p['id'] for p in products.data]
-        if not internal_ids:
-            return []
+            .limit(limit)
             
-        matches = sb.client.table("product_matches").select("internal_product_id").in_("internal_product_id", internal_ids).execute()
-        matched_ids = {m['internal_product_id'] for m in matches.data}
+        if matched_ids:
+            query = query.not_.in_("id", matched_ids)
+            
+        products = query.execute()
         
-        # Filter unmatched and format
+        # 3. Format result
         unmatched_data = []
         for p in products.data:
-            if p['id'] not in matched_ids:
-                unmatched_data.append({
-                    "id": p['id'],
-                    "sku": p['sku'],
-                    "name": p['product_name'], # Map product_name to name
-                    "description": p.get('description'),
-                    "price": p.get('selling_price', 0),
-                    "supplier": "Internal" # Placeholder
-                })
+            unmatched_data.append({
+                "id": p['id'],
+                "sku": p['sku'],
+                "name": p['product_name'], 
+                "description": p.get('description'),
+                "price": p.get('selling_price', 0),
+                "supplier": "Internal" 
+            })
         
-        return unmatched_data[:limit]
+        return unmatched_data
         
     except Exception as e:
         logger.error("fetch_unmatched_failed", error=str(e))
