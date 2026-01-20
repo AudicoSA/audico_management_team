@@ -443,6 +443,34 @@ class StockListingsAgent:
                 "status": "approved"
             }).eq("id", queue_id).execute()
             
+            # 5. [FIX] Ensure the Link is saved in product_matches
+            # We must find the internal product ID by SKU to link it.
+            try:
+                # Find internal product
+                internal_prod_res = self.supabase.client.table("products")\
+                    .select("id")\
+                    .eq("sku", product['sku'])\
+                    .limit(1)\
+                    .execute()
+                
+                if internal_prod_res.data:
+                    internal_id = internal_prod_res.data[0]['id']
+                    
+                    # Update (or Upsert) the match record
+                    # We look for an existing match for this internal ID
+                    self.supabase.client.table("product_matches").update({
+                        "opencart_product_id": product_id,
+                        "match_type": "created_via_queue"
+                    }).eq("internal_product_id", internal_id).execute()
+                    
+                    logger.info("product_link_established", internal_id=internal_id, opencart_id=product_id)
+                else:
+                    logger.warning("internal_product_not_found_for_link", sku=product['sku'])
+            
+            except Exception as link_error:
+                 # Log but don't fail the whole approval if linking fails (it can be fixed by daily sync later if we improve it)
+                 logger.error("failed_to_create_link", sku=product['sku'], error=str(link_error))
+
             logger.info("product_approved_and_created", 
                        queue_id=queue_id, 
                        product_id=product_id,
