@@ -408,13 +408,28 @@ class StockListingsAgent:
 
                 # --- VALIDATION GUARD ---
                 # Reduce risk of creating corrupted products (e.g. "Electronics Mega Store" or "name")
-                if not product_name or product_name.lower().strip() in ['name', 'product name'] or 'mega store' in product_name.lower():
+                bad_strings = [
+                    'name', 'product name', 'model name', 'xyz', 
+                    'electronics mega store', 'electronics galore', 
+                    'electronic paradise', 'electronics superstore',
+                    'electronics and gadgets store'
+                ]
+                
+                check_name = product_name.lower().strip() if product_name else ""
+                check_sku = product['sku'].lower().strip() if product['sku'] else ""
+                check_model = product.get('model', '').lower().strip()
+
+                if not check_name or any(bad in check_name for bad in bad_strings):
                     logger.error("invalid_product_name_rejected", queue_id=queue_id, name=product_name)
                     return {"status": "failed", "error": f"Invalid product name rejected: {product_name}"}
                 
-                if product['sku'].lower() == 'name':
+                if check_sku in ['name', 'sku', 'xyz'] or any(bad in check_sku for bad in bad_strings):
                      logger.error("invalid_sku_rejected", queue_id=queue_id, sku=product['sku'])
-                     return {"status": "failed", "error": "Invalid SKU rejected: 'name'"}
+                     return {"status": "failed", "error": f"Invalid SKU rejected: {product['sku']}"}
+
+                if check_model in ['name', 'model name', 'xyz', 'product model']:
+                     logger.error("invalid_model_rejected", queue_id=queue_id, model=product.get('model'))
+                     return {"status": "failed", "error": f"Invalid Model rejected: {product.get('model')}"}
                 # ------------------------
 
                 # Calculate retail price
