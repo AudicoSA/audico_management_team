@@ -407,10 +407,21 @@ class StockListingsAgent:
                 product_name = product['name']
 
                 # Calculate retail price
-                # User indicated they upload as Retail, so treat the stored 'cost_price' as Retail Price
-                # and reverse-calculate the Cost Price using the default markup (1.5)
-                retail_price = float(product['cost_price'])
-                cost_price = retail_price / 1.5
+                # Improved Logic: Check if 'selling_price' is provided in queue (e.g. from Scoop/Alignment)
+                # If so, use it as the Retail Price.
+                # If not, fallback to treating 'cost_price' as Retail (legacy behavior, or for manual uploads where user input Retail)
+                
+                queue_selling_price = float(product.get('selling_price') or 0)
+                queue_cost_price = float(product.get('cost_price') or 0)
+                
+                if queue_selling_price > 0:
+                     retail_price = queue_selling_price
+                     # If we have a cost price, use it. Otherwise reverse calc.
+                     cost_price = queue_cost_price if queue_cost_price > 0 else (retail_price / 1.5)
+                else:
+                    # Fallback: Treat cost_price as Retail (as per original logic/assumption for some flows)
+                    retail_price = queue_cost_price
+                    cost_price = retail_price / 1.5
                 
                 product_data = {
                     "sku": product['sku'],

@@ -177,6 +177,7 @@ async def create_product(request: CreateRequest):
             "sku": product.get("sku"),
             "name": final_name,
             "cost_price": rounded_price,
+            "selling_price": product.get("selling_price", 0),
             "stock_level": product.get("total_stock", 0),
             "status": "pending"
         }
