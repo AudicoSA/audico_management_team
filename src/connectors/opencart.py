@@ -224,6 +224,29 @@ class OpenCartConnector:
             if connection:
                 connection.close()
 
+    async def get_product_by_id(self, product_id: int) -> Optional[Dict[str, Any]]:
+        """Get product details by ID from OpenCart database."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"""
+                    SELECT 
+                        product_id, model, sku, price, quantity, status
+                    FROM {self.prefix}product
+                    WHERE product_id = %s
+                    LIMIT 1
+                """
+                cursor.execute(sql, (product_id,))
+                product = cursor.fetchone()
+                return product
+        except Exception as e:
+            logger.error("get_product_by_id_error", id=product_id, error=str(e))
+            return None
+        finally:
+            if connection:
+                connection.close()
+
     async def update_product_price(self, product_id: int, price: float) -> bool:
         """Update product price directly in OpenCart database.
         

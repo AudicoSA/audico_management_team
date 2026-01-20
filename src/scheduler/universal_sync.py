@@ -81,7 +81,7 @@ class UniversalProductSyncer:
         # 2. Get current OpenCart Data (to check if update matches)
         # Note: Ideally we just overwrite to be safe, but fetching helps us log "Changes"
         # For efficiency we could skip fetching and just update, but checking is safer for logging.
-        oc_product = await self.opencart.get_product(oc_id)
+        oc_product = await self.opencart.get_product_by_id(oc_id)
         if not oc_product:
              logger.warning("linked_product_missing_in_opencart", oc_id=oc_id)
              stats["errors"] += 1
