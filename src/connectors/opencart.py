@@ -454,9 +454,9 @@ class OpenCartConnector:
                 conditions = []
                 params = []
                 for word in words:
-                    # Remove special chars for search
-                    clean_word = "".join(c for c in word if c.isalnum())
-                    if len(clean_word) > 2: # Only search significant words
+                    # Remove special chars but KEEP hyphens, dots, underscores which are common in model #s
+                    clean_word = "".join(c for c in word if c.isalnum() or c in "-._")
+                    if len(clean_word) > 1: # Allow 2-char words too e.g. "G2"
                         conditions.append(f"pd.name LIKE %s")
                         params.append(f"%{clean_word}%")
                 
