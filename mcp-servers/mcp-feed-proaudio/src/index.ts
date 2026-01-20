@@ -161,9 +161,42 @@ export class ProAudioMCPServer implements MCPSupplierTool {
         try {
           if (i % 50 === 0) logSync.progress('Pro Audio', i, products.length);
 
-          const unifiedProduct = this.transformToUnified(products[i]);
+          let unifiedProduct = this.transformToUnified(products[i]);
+
+          // SPECIAL LOGIC: "Call for Price" / Zero Price
+          // If price is 0, we treat it as OOS but want to KEEP existing price if possible.
+          if (products[i].price === 0 && this.supplier) {
+            // Check if product exists in DB to get its old price
+            const { data: existing } = await this.supabase.getClient()
+              .from('products')
+              .select('cost_price, retail_price, selling_price, margin_percentage')
+              .eq('supplier_id', this.supplier.id)
+              .eq('supplier_sku', products[i].sku)
+              .single();
+
+            if (existing) {
+              // Found existing: Keep old prices, force stock to 0
+              unifiedProduct.cost_price = existing.cost_price;
+              unifiedProduct.retail_price = existing.retail_price;
+              unifiedProduct.selling_price = existing.selling_price;
+              unifiedProduct.margin_percentage = existing.margin_percentage;
+              unifiedProduct.total_stock = 0;
+              unifiedProduct.stock_jhb = 0;
+              unifiedProduct.active = true; // Keep active but OOS
+              logger.info(`Preserving price for OOS item: ${products[i].sku}`);
+            } else {
+              // New product with 0 price? 
+              // Skip it, or insert with 0? User implies these are existing products.
+              // If it's truly new and has no price, we probably shouldn't list it yet.
+              if (!options?.dryRun) {
+                logger.warn(`Skipping NEW product with zero price: ${products[i].sku}`);
+                continue;
+              }
+            }
+          }
+
           if (options?.dryRun) {
-            logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name}`);
+            logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name} (Price: ${unifiedProduct.selling_price}, Stock: ${unifiedProduct.total_stock})`);
             continue;
           }
 
@@ -242,9 +275,21 @@ export class ProAudioMCPServer implements MCPSupplierTool {
 
         const productData = await page.evaluate((url) => {
           const name = (document.querySelector('h1.product_title') as any)?.textContent?.trim() || '';
-          const priceText = (document.querySelector('.price') as any)?.textContent || '';
-          const priceMatch = priceText.match(/R\s*([0-9,]+(?:\.[0-9]{2})?)/);
-          const price = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0;
+
+          // Improved price parsing: handle R symbols, spaces, and potential hidden spans
+          const priceElement = document.querySelector('.price');
+          // Prefer ins/bdi (sale price) if available, otherwise just text
+          const priceText = (priceElement?.querySelector('ins .amount') || priceElement)?.textContent || '';
+
+          // Robust regex: matches numbers with optional commas and decimals, ignoring non-digits
+          // Example: "R 1,234.50" -> 1234.50
+          const priceMatch = priceText.match(/[\d,]+\.?\d*/);
+          let price = 0;
+          if (priceMatch) {
+            const cleanString = priceMatch[0].replace(/,/g, '');
+            price = parseFloat(cleanString);
+          }
+
           const image = (document.querySelector('.woocommerce-product-gallery__image img') as any)?.src || '';
           const sku = (document.querySelector('.sku') as any)?.textContent?.trim() || `PA-${Date.now()}`;
           const brand = (document.querySelector('.product_brand') as any)?.textContent?.trim() || '';
@@ -252,17 +297,24 @@ export class ProAudioMCPServer implements MCPSupplierTool {
           return { name, sku, price, image, url, brand };
         }, productLinks[i]);
 
+
+
         if (productData.name) {
+          // MODIFIED: Include products even if price is 0 (treat as OOS)
           products.push({
             sku: productData.sku,
             name: productData.name,
-            price: productData.price,
+            price: productData.price, // Can be 0
             image: productData.image,
             productUrl: productLinks[i],
-            inStock: true,
+            inStock: productData.price > 0, // Out of stock if no price
             brand: productData.brand,
             category: 'Audio',
           });
+
+          if (productData.price === 0) {
+            logger.info(`⚠️ Detected zero price for ${productData.sku} - Treating as OOS`);
+          }
         }
 
         if (i % 20 === 0 && !dryRun) await new Promise(resolve => setTimeout(resolve, 500));
