@@ -446,17 +446,22 @@ class OpenCartConnector:
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
-                # Split query into words and search for products matching ALL words (up to 3)
-                words = query.split()[:3]
-                if not words:
-                    return []
+                import re
+                # Split by space, hyphen, underscore, dot, or forward slash
+                words = re.split(r'[\s\-_./]+', query)
+                
+                # Filter strictly alphanumeric for safety and length > 1
+                valid_words = [w for w in words if len(w) > 1]
+                
+                # Take top 3 significant tokens
+                search_tokens = valid_words[:3]
                 
                 conditions = []
                 params = []
-                for word in words:
-                    # Remove special chars but KEEP hyphens, dots, underscores which are common in model #s
-                    clean_word = "".join(c for c in word if c.isalnum() or c in "-._")
-                    if len(clean_word) > 1: # Allow 2-char words too e.g. "G2"
+                for word in search_tokens:
+                    # Clean purely to alphanumeric just in case, though regex did most work
+                    clean_word = "".join(c for c in word if c.isalnum())
+                    if len(clean_word) > 1: 
                         conditions.append(f"pd.name LIKE %s")
                         params.append(f"%{clean_word}%")
                 
