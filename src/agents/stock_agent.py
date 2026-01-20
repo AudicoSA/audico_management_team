@@ -406,6 +406,17 @@ class StockListingsAgent:
                 # Simplify Name Logic: Use valid name directly from queue
                 product_name = product['name']
 
+                # --- VALIDATION GUARD ---
+                # Reduce risk of creating corrupted products (e.g. "Electronics Mega Store" or "name")
+                if not product_name or product_name.lower().strip() in ['name', 'product name'] or 'mega store' in product_name.lower():
+                    logger.error("invalid_product_name_rejected", queue_id=queue_id, name=product_name)
+                    return {"status": "failed", "error": f"Invalid product name rejected: {product_name}"}
+                
+                if product['sku'].lower() == 'name':
+                     logger.error("invalid_sku_rejected", queue_id=queue_id, sku=product['sku'])
+                     return {"status": "failed", "error": "Invalid SKU rejected: 'name'"}
+                # ------------------------
+
                 # Calculate retail price
                 # Improved Logic: Check if 'selling_price' is provided in queue (e.g. from Scoop/Alignment)
                 # If so, use it as the Retail Price.
