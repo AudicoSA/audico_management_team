@@ -6,11 +6,14 @@ from src.connectors.supabase import get_supabase_connector
 from src.connectors.opencart import OpenCartConnector
 from src.utils.logging import AgentLogger
 
+from src.scheduler.universal_sync import UniversalProductSyncer
+
 logger = AgentLogger("APSScheduler")
 
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
 scanner_service = SupplierScanner()
+universal_syncer = UniversalProductSyncer()
 
 async def run_scanner_job(supplier_name: str):
     """Wrapper to run scanner from job."""
@@ -30,6 +33,14 @@ async def run_queue_processor_job():
         await agent.process_approval_queue()
     except Exception as e:
         logger.error("queue_processor_job_failed", error=str(e))
+
+async def run_universal_sync_job():
+    """Wrapper to run universal product sync."""
+    logger.info("universal_sync_job_started")
+    try:
+        await universal_syncer.sync_all_products(dry_run=False)
+    except Exception as e:
+        logger.error("universal_sync_job_failed", error=str(e))
 
 def setup_scheduler():
     """Configure and start the scheduler."""
@@ -68,6 +79,14 @@ def setup_scheduler():
         replace_existing=True
     )
 
+    # Universal Sync: 06:00 AM Daily
+    scheduler.add_job(
+        run_universal_sync_job,
+        CronTrigger(hour=6, minute=0),
+        id="universal_product_sync",
+        replace_existing=True
+    )
+
 async def run_upload_poller_job():
     """Wrapper to run upload poller."""
     # logger.info("upload_poller_job_started") # Too noisy every minute
@@ -78,7 +97,6 @@ async def run_upload_poller_job():
         await agent.poll_pending_uploads()
     except Exception as e:
         logger.error("upload_poller_job_failed", error=str(e))
-
 
 
 def start_scheduler():
