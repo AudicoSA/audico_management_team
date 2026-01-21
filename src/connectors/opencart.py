@@ -453,8 +453,17 @@ class OpenCartConnector:
                 # Filter strictly alphanumeric for safety and length > 1
                 valid_words = [w for w in words if len(w) > 1]
                 
-                # Take top 3 significant tokens
-                search_tokens = valid_words[:3]
+                # IMPROVED: Prioritize model numbers (tokens containing digits)
+                # Model numbers like "M30x", "ATH-M30x", "G5" are more specific
+                model_tokens = [w for w in valid_words if any(c.isdigit() for c in w)]
+                brand_tokens = [w for w in valid_words if not any(c.isdigit() for c in w)]
+                
+                # Take model numbers first (up to 2), then brand tokens (up to 2)
+                search_tokens = model_tokens[:2] + brand_tokens[:2]
+                
+                # Fallback to original logic if no model numbers found
+                if not search_tokens:
+                    search_tokens = valid_words[:4]
                 
                 conditions = []
                 params = []
