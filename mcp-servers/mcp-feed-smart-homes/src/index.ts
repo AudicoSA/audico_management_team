@@ -202,12 +202,32 @@ export class SmartHomesMCPServer implements MCPSupplierTool {
     return limit ? allProducts.slice(0, limit) : allProducts;
   }
 
+  /**
+   * Round to nearest R10. E.g., R95 -> R100, R94 -> R90
+   */
+  private roundToNearest10(value: number): number {
+    return Math.round(value / 10) * 10;
+  }
+
   private transformToUnified(shProduct: SmartHomesProduct): UnifiedProduct {
     const mainVariant = shProduct.variants[0];
-    const costExclVat = parseFloat(mainVariant.price) || 0;
-    const costInclVat = costExclVat * 1.15;
-    const sellingPrice = costInclVat * 1.25; // 15% VAT + 25% margin
-    const marginPercentage = ((sellingPrice - costExclVat) / costExclVat) * 100;
+    const apiPrice = parseFloat(mainVariant.price) || 0; // This is ex-VAT
+
+    // Smart Homes API returns ex-VAT prices (taxable: true)
+    // Website shows incl-VAT prices
+    // Step 1: Add 15% VAT to get the "website price"
+    const priceInclVat = apiPrice * 1.15;
+
+    // Step 2: Apply 5% discount 
+    const discountedPrice = priceInclVat * 0.95;
+
+    // Step 3: Round to nearest R10
+    const sellingPrice = this.roundToNearest10(discountedPrice);
+
+    // Cost is the incl-VAT price for margin calculation
+    const marginPercentage = priceInclVat > 0
+      ? ((priceInclVat - sellingPrice) / priceInclVat) * 100
+      : 0;
 
     return {
       product_name: shProduct.title,
@@ -216,7 +236,7 @@ export class SmartHomesMCPServer implements MCPSupplierTool {
       brand: shProduct.vendor || 'Smart Homes',
       category_name: shProduct.product_type || 'Electronics',
       description: shProduct.body_html?.replace(/<[^>]*>/g, ' ').trim().substring(0, 500),
-      cost_price: costExclVat,
+      cost_price: priceInclVat,
       retail_price: sellingPrice,
       selling_price: sellingPrice,
       margin_percentage: parseFloat(marginPercentage.toFixed(2)),

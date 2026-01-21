@@ -1,361 +1,434 @@
-/**
- * Pro Audio MCP Server
- * WordPress REST API + Playwright browser scraping fallback
- */
 
-import 'dotenv/config';
-import { chromium, Browser, Page } from 'playwright';
-import axios, { AxiosInstance } from 'axios';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import axios from "axios";
+import dotenv from "dotenv";
 import {
-  MCPSupplierTool,
-  SyncOptions,
+  UnifiedProduct,
   SyncResult,
   SupplierStatus,
   Supplier,
-  UnifiedProduct,
-  SupabaseService,
-  PricingCalculator,
-  logger,
-  logSync,
-} from '@audico/shared';
+  SyncOptions,
+} from "@audico/shared";
+import { v4 as uuidv4 } from 'uuid';
 
-interface ProAudioProduct {
-  sku: string;
-  name: string;
-  price: number;
-  image: string;
-  productUrl: string;
-  inStock: boolean;
-  brand?: string;
-  category?: string;
+import path from "path";
+import fs from "fs";
+
+// Try to load .env from project root (standard location in this monorepo structure)
+const envPath = path.resolve(process.cwd(), "../../../.env");
+console.log(`Loading .env from: ${envPath}`);
+if (fs.existsSync(envPath)) {
+  console.log("OK: .env file exists at path");
+} else {
+  console.error("ERROR: .env file NOT found at path");
 }
 
-export class ProAudioMCPServer implements MCPSupplierTool {
-  private supabase: SupabaseService;
-  private supplier: Supplier | null = null;
-  private client: AxiosInstance;
+dotenv.config({ path: envPath });
 
-  private config = {
-    baseUrl: process.env.PROAUDIO_BASE_URL || 'https://proaudio.co.za',
-    wpRestApi: process.env.PROAUDIO_WP_REST_API || '/wp-json/wc/v3/products',
-    headless: process.env.HEADLESS !== 'false',
-    timeout: parseInt(process.env.TIMEOUT || '30000'),
-  };
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  constructor(supabaseUrl?: string, supabaseKey?: string) {
-    this.supabase = new SupabaseService(supabaseUrl, supabaseKey);
-    this.client = axios.create({
-      timeout: 30000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
+if (!supabaseUrl || !supabaseKey) {
+  console.error("ERROR: Missing Supabase credentials in env!");
+  console.error("SUPABASE_URL:", supabaseUrl ? "Set" : "Missing");
+  console.error("SUPABASE_SERVICE_ROLE_KEY:", supabaseKey ? "Set" : "Missing");
+  process.exit(1);
+}
+
+const supabase: SupabaseClient = createClient(supabaseUrl, supabaseKey);
+
+// Interfaces for WooCommerce Store API response
+interface StoreProductPrice {
+  price: string;
+  regular_price: string;
+  sale_price: string;
+  currency_code: string;
+  currency_symbol: string;
+  currency_minor_unit: number;
+  currency_prefix: string;
+}
+
+interface StoreProductImage {
+  id: number;
+  src: string;
+  name: string;
+  alt: string;
+}
+
+interface StoreProductCategory {
+  id: number;
+  name: string;
+  slug: string;
+}
+
+interface StoreProduct {
+  id: number;
+  name: string;
+  slug: string;
+  permalink: string;
+  sku: string;
+  description: string;
+  short_description: string;
+  prices: StoreProductPrice;
+  is_in_stock: boolean;
+  images: StoreProductImage[];
+  categories: StoreProductCategory[];
+}
+
+// Database record interface matching actual schema
+interface ProductRecord {
+  supplier_id: string;
+  supplier_sku: string;
+  product_name: string;
+  description: string;
+  category_name: string;
+  retail_price: number;
+  selling_price: number;
+  cost_price: number;
+  total_stock: number;
+  images: string[];
+  supplier_url: string;
+  sku: string;
+  active: boolean;
+}
+
+export class ProAudioMCPServer {
+  private server: McpServer;
+  private readonly SUPPLIER_NAME = "Pro Audio";
+  private readonly SUPPLIER_ID = "f608fd75-ae4e-4e91-8132-4f741d01f07d";
+  private readonly API_BASE = "https://proaudio.co.za/wp-json/wc/store/v1/products";
+  private readonly USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  private readonly DISCOUNT_PERCENT = 10; // 10% discount on scraped prices
+
+  constructor() {
+    this.server = new McpServer({
+      name: "mcp-feed-proaudio",
+      version: "2.0.0",
     });
+
+    this.setupTools();
+  }
+
+  /**
+   * Round to nearest R10. E.g., R1289 -> R1290, R13462.55 -> R13460
+   */
+  private roundToNearest10(value: number): number {
+    return Math.round(value / 10) * 10;
+  }
+
+  /**
+   * Apply discount and round to nearest R10.
+   */
+  private applyDiscountAndRound(price: number): number {
+    const discounted = price * (1 - this.DISCOUNT_PERCENT / 100);
+    return this.roundToNearest10(discounted);
+  }
+
+  private setupTools() {
+    this.server.tool(
+      "sync",
+      "Synchronize products from ProAudio via WooCommerce Store API",
+      {
+        limit: z.number().optional(),
+        dryRun: z.boolean().optional(),
+      },
+      async ({ limit, dryRun }) => {
+        try {
+          const result = await this.syncProducts({ limit, dryRun });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        } catch (error: any) {
+          console.error("Sync error:", error);
+          return {
+            content: [{ type: "text", text: `Sync failed: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+    );
   }
 
   async testConnection(): Promise<boolean> {
     try {
-      logger.info('🔌 Testing Pro Audio connection...');
-
-      // Try WordPress REST API first
-      try {
-        const response = await this.client.get(`${this.config.baseUrl}${this.config.wpRestApi}?per_page=1`);
-        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-          logger.info('✅ Pro Audio WordPress REST API connection successful');
-          return true;
-        }
-      } catch (apiError) {
-        logger.info('⚠️ WordPress REST API not available, testing browser fallback...');
-      }
-
-      // Fallback to browser
-      const browser = await chromium.launch({ headless: this.config.headless });
-      const page = await browser.newPage();
-      await page.goto(this.config.baseUrl, { timeout: 60000, waitUntil: 'domcontentloaded' });
-      const title = await page.title();
-      await browser.close();
-
-      if (title) {
-        logger.info(`✅ Pro Audio browser connection successful: ${title}`);
-        return true;
-      }
-      return false;
-    } catch (error: any) {
-      logger.error(`❌ Pro Audio connection failed: ${error.message}`);
-      return false;
-    }
-  }
-
-  async syncProducts(options?: SyncOptions): Promise<SyncResult> {
-    const startTime = Date.now();
-    let sessionId = '';
-    let browser: Browser | null = null;
-
-    try {
-      this.supplier = await this.supabase.getSupplierByName('Pro Audio');
-      if (!this.supplier) throw new Error('Pro Audio supplier not found');
-
-      await this.supabase.updateSupplierStatus(this.supplier.id, 'running');
-      sessionId = await this.supabase.createSyncSession(this.supplier.id, options?.sessionName || 'manual');
-      logSync.start('Pro Audio', sessionId);
-
-      // Use browser scraping (WordPress REST API often requires authentication)
-      browser = await chromium.launch({ headless: this.config.headless });
-      const page = await browser.newPage();
-
-      logger.info('📄 Loading Pro Audio shop page...');
-      await page.goto(`${this.config.baseUrl}/shop`, { waitUntil: 'domcontentloaded' });
-
-      // Scroll and load more products (WooCommerce infinite scroll or pagination)
-      logger.info('🔄 Scrolling to load all products...');
-      let previousCount = 0;
-      let currentCount = 0;
-      let scrollAttempts = 0;
-      const maxScrolls = 100;
-
-      do {
-        previousCount = currentCount;
-
-        // Scroll to bottom
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await page.waitForTimeout(1500);
-
-        // Check for and click pagination/load more buttons
-        try {
-          const loadMoreBtn = page.locator('a.next, .load-more, button:has-text("Load More")').first();
-          if (await loadMoreBtn.isVisible({ timeout: 2000 })) {
-            await loadMoreBtn.click();
-            await page.waitForTimeout(2000);
-            logger.info(`📱 Clicked pagination button #${scrollAttempts + 1}`);
-          }
-        } catch {
-          // No load more button
-        }
-
-        currentCount = await page.evaluate(() => {
-          return document.querySelectorAll('a[href*="/product/"]').length;
-        });
-
-        scrollAttempts++;
-        if (scrollAttempts % 5 === 0) {
-          logger.info(`📦 Found ${currentCount} product links so far...`);
-        }
-      } while (currentCount > previousCount && scrollAttempts < maxScrolls);
-
-      // Collect product links
-      const productLinks = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('a[href*="/product/"]'));
-        return [...new Set(links.map((a: any) => a.href))];
+      const response = await axios.get(this.API_BASE, {
+        params: { per_page: 1 },
+        headers: { "User-Agent": this.USER_AGENT },
+        timeout: 10000
       });
-
-      logger.info(`🔍 Found ${productLinks.length} total product links`);
-
-      const limit = options?.limit || productLinks.length;
-      const linksToProcess = productLinks.slice(0, limit);
-
-      const products = await this.scrapeProductDetails(page, linksToProcess, options?.dryRun);
-
-      let productsAdded = 0, productsUpdated = 0;
-      const errors: string[] = [], warnings: string[] = [];
-
-      for (let i = 0; i < products.length; i++) {
-        try {
-          if (i % 50 === 0) logSync.progress('Pro Audio', i, products.length);
-
-          let unifiedProduct = this.transformToUnified(products[i]);
-
-          // SPECIAL LOGIC: "Call for Price" / Zero Price
-          // If price is 0, we treat it as OOS but want to KEEP existing price if possible.
-          if (products[i].price === 0 && this.supplier) {
-            // Check if product exists in DB to get its old price
-            const { data: existing } = await this.supabase.getClient()
-              .from('products')
-              .select('cost_price, retail_price, selling_price, margin_percentage')
-              .eq('supplier_id', this.supplier.id)
-              .eq('supplier_sku', products[i].sku)
-              .single();
-
-            if (existing) {
-              // Found existing: Keep old prices, force stock to 0
-              unifiedProduct.cost_price = existing.cost_price;
-              unifiedProduct.retail_price = existing.retail_price;
-              unifiedProduct.selling_price = existing.selling_price;
-              unifiedProduct.margin_percentage = existing.margin_percentage;
-              unifiedProduct.total_stock = 0;
-              unifiedProduct.stock_jhb = 0;
-              unifiedProduct.active = true; // Keep active but OOS
-              logger.info(`Preserving price for OOS item: ${products[i].sku}`);
-            } else {
-              // New product with 0 price? 
-              // Skip it, or insert with 0? User implies these are existing products.
-              // If it's truly new and has no price, we probably shouldn't list it yet.
-              if (!options?.dryRun) {
-                logger.warn(`Skipping NEW product with zero price: ${products[i].sku}`);
-                continue;
-              }
-            }
-          }
-
-          if (options?.dryRun) {
-            logger.info(`[DRY RUN] Would upsert: ${unifiedProduct.product_name} (Price: ${unifiedProduct.selling_price}, Stock: ${unifiedProduct.total_stock})`);
-            continue;
-          }
-
-          const result = await this.supabase.upsertProduct(unifiedProduct);
-          result.isNew ? productsAdded++ : productsUpdated++;
-        } catch (error: any) {
-          errors.push(`Failed to process ${products[i].sku}: ${error.message}`);
-        }
-      }
-
-      const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-      await this.supabase.completeSyncSession(sessionId, { products_added: productsAdded, products_updated: productsUpdated, products_unchanged: 0, errors, warnings });
-      await this.supabase.updateSupplierStatus(this.supplier.id, 'idle');
-      await this.supabase.updateSupplierLastSync(this.supplier.id);
-
-      logSync.complete('Pro Audio', sessionId, { added: productsAdded, updated: productsUpdated, duration: durationSeconds });
-
-      return {
-        success: true,
-        session_id: sessionId,
-        products_added: productsAdded,
-        products_updated: productsUpdated,
-        products_unchanged: 0,
-        errors,
-        warnings,
-        duration_seconds: durationSeconds,
-      };
-    } catch (error: any) {
-      logger.error(`❌ Pro Audio sync failed: ${error.message}`);
-      if (sessionId && this.supplier) {
-        await this.supabase.failSyncSession(sessionId, error);
-        await this.supabase.updateSupplierStatus(this.supplier.id, 'error', error.message);
-      }
-      return {
-        success: false,
-        session_id: sessionId,
-        products_added: 0,
-        products_updated: 0,
-        products_unchanged: 0,
-        errors: [error.message],
-        warnings: [],
-        duration_seconds: Math.floor((Date.now() - startTime) / 1000),
-      };
-    } finally {
-      if (browser) await browser.close();
+      return response.status === 200;
+    } catch (error) {
+      console.error("Connection test failed:", error);
+      return false;
     }
   }
 
   async getStatus(): Promise<SupplierStatus> {
-    const supplier = await this.supabase.getSupplierByName('Pro Audio');
-    if (!supplier) return { supplier_name: 'Pro Audio', total_products: 0, status: 'error', error_message: 'Supplier not found' };
-    const totalProducts = await this.supabase.getProductCount(supplier.id);
+    const { count } = await supabase
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .eq("supplier_id", this.SUPPLIER_ID);
+
     return {
-      supplier_name: supplier.name,
-      last_sync: supplier.last_sync ? new Date(supplier.last_sync) : undefined,
-      total_products: totalProducts,
-      status: supplier.status as any,
-      error_message: supplier.error_message || undefined,
+      supplier_name: this.SUPPLIER_NAME,
+      total_products: count || 0,
+      status: 'active'
     };
   }
 
   async getSupplierInfo(): Promise<Supplier> {
-    const supplier = await this.supabase.getSupplierByName('Pro Audio');
-    if (!supplier) throw new Error('Pro Audio supplier not found');
-    return supplier;
+    return {
+      id: this.SUPPLIER_ID,
+      name: this.SUPPLIER_NAME,
+      type: 'feed',
+      active: true,
+      status: 'idle'
+    };
   }
 
-  private async scrapeProductDetails(page: Page, productLinks: string[], dryRun?: boolean): Promise<ProAudioProduct[]> {
-    const products: ProAudioProduct[] = [];
+  async syncProducts(options: SyncOptions = {}): Promise<SyncResult> {
+    const startTime = Date.now();
+    const sessionId = uuidv4();
+    const result: SyncResult = {
+      success: false,
+      session_id: sessionId,
+      products_added: 0,
+      products_updated: 0,
+      products_unchanged: 0,
+      errors: [],
+      warnings: [],
+      duration_seconds: 0
+    };
 
-    for (let i = 0; i < productLinks.length; i++) {
-      try {
-        if (i % 20 === 0) logger.info(`📦 Progress: ${i}/${productLinks.length} products`);
+    console.log(`Starting sync session ${sessionId} for ${this.SUPPLIER_NAME}`);
+    console.log(`Price logic: -${this.DISCOUNT_PERCENT}% then round to nearest R10`);
+    console.log(`Stock logic: Has price -> 10, No price (Ask for Price) -> 0`);
+    if (options.dryRun) console.log("DRY RUN MODE - no changes will be saved");
 
-        await page.goto(productLinks[i], { waitUntil: 'domcontentloaded', timeout: 10000 });
+    try {
+      // 1. Fetch all products from API
+      const rawProducts = await this.fetchAllProducts(options.limit);
+      console.log(`Fetched ${rawProducts.length} raw products from API`);
 
-        const productData = await page.evaluate((url) => {
-          const name = (document.querySelector('h1.product_title') as any)?.textContent?.trim() || '';
+      // 2. Transform and separate by price status
+      const productsWithPrice: ProductRecord[] = [];
+      const productsNoPrice: ProductRecord[] = [];
 
-          // Improved price parsing: handle R symbols, spaces, and potential hidden spans
-          const priceElement = document.querySelector('.price');
-          // Prefer ins/bdi (sale price) if available, otherwise just text
-          const priceText = (priceElement?.querySelector('ins .amount') || priceElement)?.textContent || '';
+      for (const p of rawProducts) {
+        const transformed = this.transformProduct(p);
+        if (transformed.hasRealPrice) {
+          productsWithPrice.push(transformed.record);
+        } else {
+          productsNoPrice.push(transformed.record);
+        }
+      }
 
-          // Robust regex: matches numbers with optional commas and decimals, ignoring non-digits
-          // Example: "R 1,234.50" -> 1234.50
-          const priceMatch = priceText.match(/[\d,]+\.?\d*/);
-          let price = 0;
-          if (priceMatch) {
-            const cleanString = priceMatch[0].replace(/,/g, '');
-            price = parseFloat(cleanString);
-          }
+      console.log(`Products with price: ${productsWithPrice.length}`);
+      console.log(`Products without price (Ask for Price): ${productsNoPrice.length}`);
 
-          const image = (document.querySelector('.woocommerce-product-gallery__image img') as any)?.src || '';
-          const sku = (document.querySelector('.sku') as any)?.textContent?.trim() || `PA-${Date.now()}`;
-          const brand = (document.querySelector('.product_brand') as any)?.textContent?.trim() || '';
+      // 3. Upsert products WITH prices (full upsert)
+      if (!options.dryRun && productsWithPrice.length > 0) {
+        console.log(`Upserting ${productsWithPrice.length} products with prices...`);
 
-          return { name, sku, price, image, url, brand };
-        }, productLinks[i]);
+        const chunkSize = 100;
+        for (let i = 0; i < productsWithPrice.length; i += chunkSize) {
+          const chunk = productsWithPrice.slice(i, i + chunkSize);
 
+          const { error } = await supabase
+            .from("products")
+            .upsert(chunk, {
+              onConflict: "supplier_sku,supplier_id",
+              ignoreDuplicates: false,
+            });
 
-
-        if (productData.name) {
-          // MODIFIED: Include products even if price is 0 (treat as OOS)
-          products.push({
-            sku: productData.sku,
-            name: productData.name,
-            price: productData.price, // Can be 0
-            image: productData.image,
-            productUrl: productLinks[i],
-            inStock: productData.price > 0, // Out of stock if no price
-            brand: productData.brand,
-            category: 'Audio',
-          });
-
-          if (productData.price === 0) {
-            logger.info(`⚠️ Detected zero price for ${productData.sku} - Treating as OOS`);
+          if (error) {
+            console.error(`Error upserting chunk ${Math.floor(i / chunkSize) + 1}:`, error);
+            result.errors.push(error.message);
+          } else {
+            result.products_updated += chunk.length;
+            console.log(`  Saved chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(productsWithPrice.length / chunkSize)}`);
           }
         }
+      }
 
-        if (i % 20 === 0 && !dryRun) await new Promise(resolve => setTimeout(resolve, 500));
+      // 4. For products WITHOUT prices: Only update stock to 0, keep existing price
+      if (!options.dryRun && productsNoPrice.length > 0) {
+        console.log(`Updating stock to 0 for ${productsNoPrice.length} 'Ask for Price' products...`);
+
+        let processedCount = 0;
+        for (const p of productsNoPrice) {
+          try {
+            // Check if product exists
+            const { data: existing } = await supabase
+              .from("products")
+              .select("id, retail_price, selling_price")
+              .eq("supplier_sku", p.supplier_sku)
+              .eq("supplier_id", p.supplier_id)
+              .single();
+
+            if (existing) {
+              // Product exists - update only stock fields, keep prices
+              await supabase
+                .from("products")
+                .update({ total_stock: 0, active: false })
+                .eq("id", existing.id);
+              result.products_updated++;
+            } else {
+              // Product doesn't exist - insert with 0 price
+              await supabase.from("products").insert(p);
+              result.products_added++;
+            }
+
+            processedCount++;
+            if (processedCount % 50 === 0) {
+              console.log(`  Processed ${processedCount}/${productsNoPrice.length} no-price products`);
+            }
+          } catch (err: any) {
+            console.error(`Error updating ${p.supplier_sku}:`, err.message);
+            result.errors.push(`${p.supplier_sku}: ${err.message}`);
+          }
+        }
+      }
+
+      result.success = result.errors.length === 0;
+
+    } catch (error: any) {
+      console.error("Sync failed with exception:", error);
+      result.errors.push(error.message);
+      result.success = false;
+    } finally {
+      result.duration_seconds = (Date.now() - startTime) / 1000;
+      console.log(`Sync completed in ${result.duration_seconds.toFixed(1)}s`);
+      console.log(`  Updated: ${result.products_updated}, Added: ${result.products_added}, Errors: ${result.errors.length}`);
+    }
+
+    return result;
+  }
+
+  private async fetchAllProducts(limit?: number): Promise<StoreProduct[]> {
+    const allProducts: StoreProduct[] = [];
+    let page = 1;
+    const perPage = 100; // Max allowed by WooCommerce Store API
+
+    console.log(`Connecting to Pro Audio API: ${this.API_BASE}`);
+
+    while (true) {
+      if (limit && allProducts.length >= limit) break;
+
+      try {
+        console.log(`  Fetching page ${page}...`);
+        const response = await axios.get<StoreProduct[]>(this.API_BASE, {
+          params: {
+            per_page: perPage,
+            page: page,
+          },
+          headers: {
+            "User-Agent": this.USER_AGENT,
+          },
+          timeout: 30000,
+        });
+
+        const products = response.data;
+        if (!Array.isArray(products) || products.length === 0) {
+          console.log(`  Reached end of product list at page ${page}`);
+          break;
+        }
+
+        allProducts.push(...products);
+        console.log(`  Page ${page}: ${products.length} products (Total: ${allProducts.length})`);
+
+        // Check limit
+        if (limit && allProducts.length >= limit) {
+          allProducts.splice(limit);
+          break;
+        }
+
+        page++;
+
+        // Polite delay between requests
+        await new Promise(r => setTimeout(r, 500));
+
       } catch (error: any) {
-        logger.error(`Error scraping ${productLinks[i]}: ${error.message}`);
+        if (axios.isAxiosError(error) && error.response?.status === 400) {
+          console.log(`  Reached end of pages (400 Bad Request) at page ${page}`);
+          break;
+        }
+        console.error(`  Error fetching page ${page}:`, error.message);
+        throw error;
       }
     }
 
-    return products;
+    return allProducts;
   }
 
-  private transformToUnified(paProduct: ProAudioProduct): UnifiedProduct {
-    // ProAudio pricing: scraped price is their website price
-    // Our retail = scraped price - 10%
-    // Our cost = scraped price - 20%
-    const scrapedPrice = paProduct.price;
-    const retailPrice = scrapedPrice * 0.90; // 10% off scraped price
-    const costPrice = scrapedPrice * 0.80; // 20% off scraped price
-    const marginPercentage = ((retailPrice - costPrice) / costPrice) * 100;
+  private transformProduct(product: StoreProduct): { record: ProductRecord; hasRealPrice: boolean } {
+    // Parse price from cents
+    const rawPriceCents = parseInt(product.prices.price, 10);
+    const currencyMinorUnit = product.prices.currency_minor_unit || 2;
 
-    return {
-      product_name: paProduct.name,
-      sku: paProduct.sku,
-      model: paProduct.name, // Use product name as model, not SKU
-      brand: paProduct.brand || 'Pro Audio',
-      category_name: paProduct.category || 'Audio',
-      cost_price: parseFloat(costPrice.toFixed(2)),
-      retail_price: parseFloat(retailPrice.toFixed(2)),
-      selling_price: parseFloat(retailPrice.toFixed(2)),
-      margin_percentage: marginPercentage,
-      total_stock: paProduct.inStock ? 10 : 0,
-      stock_jhb: paProduct.inStock ? 10 : 0,
-      stock_cpt: 0,
-      stock_dbn: 0,
-      images: paProduct.image ? [paProduct.image] : [],
-      specifications: { product_url: paProduct.productUrl },
-      supplier_id: this.supplier!.id,
-      supplier_sku: paProduct.sku,
-      active: paProduct.inStock,
+    let rawPrice = 0;
+    let hasRealPrice = false;
+
+    if (!isNaN(rawPriceCents) && rawPriceCents > 0) {
+      rawPrice = rawPriceCents / Math.pow(10, currencyMinorUnit);
+      hasRealPrice = true;
+    }
+
+    // Apply pricing logic:
+    // - Has price: Apply 10% discount, round to nearest R10, set stock to 10
+    // - No price (Ask for Price): Set price to 0, stock to 0
+    let finalPrice = 0;
+    let stockLevel = 0;
+
+    if (hasRealPrice) {
+      finalPrice = this.applyDiscountAndRound(rawPrice);
+      stockLevel = 10;
+    }
+
+    // Generate SKU if missing
+    let sku = product.sku?.trim() || "";
+    if (!sku) {
+      sku = `PA-${product.slug}`;
+    }
+
+    // Get category string
+    const categoryStr = product.categories.map(c => c.name).join(" > ");
+
+    // Get images as array
+    const images = product.images.map(img => img.src).filter(Boolean);
+
+    const record: ProductRecord = {
+      supplier_id: this.SUPPLIER_ID,
+      supplier_sku: sku,
+      product_name: product.name,
+      description: product.description || product.short_description || "",
+      category_name: categoryStr,
+      retail_price: finalPrice,
+      selling_price: finalPrice,
+      cost_price: 0,
+      total_stock: stockLevel,
+      images: images,
+      supplier_url: product.permalink,
+      sku: sku,
+      active: stockLevel > 0,
     };
+
+    return { record, hasRealPrice };
+  }
+
+  async start() {
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+    console.log("Pro Audio MCP Server running on stdio (v2.0 - API-based)");
   }
 }
 
-export default ProAudioMCPServer;
+const server = new ProAudioMCPServer();
+server.start().catch((error) => {
+  console.error("Fatal error:", error);
+  process.exit(1);
+});

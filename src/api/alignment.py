@@ -39,9 +39,11 @@ async def get_unmatched_products(limit: int = 20):
         matches = sb.client.table("product_matches").select("internal_product_id").execute()
         matched_ids = [m['internal_product_id'] for m in matches.data]
         
-        # 2. Query products NOT in the matched list
+        # 2. Query products NOT in the matched list AND with price > 0
+        # Hide zero-price products (e.g., "Ask for Price") until they get a real price
         query = sb.client.table("products")\
             .select("id, sku, product_name, description, selling_price")\
+            .gt("selling_price", 0)\
             .order("created_at", desc=True)\
             .limit(limit)
             
