@@ -90,19 +90,19 @@ def setup_scheduler():
         replace_existing=True
     )
 
-    # Pro Audio MCP Sync: 05:00 AM Daily (before universal sync)
+    # Pro Audio MCP Sync: 02:30 AM Daily (before 3 AM universal sync via cron-job.org)
     scheduler.add_job(
         run_mcp_sync_job,
-        CronTrigger(hour=5, minute=0),
+        CronTrigger(hour=2, minute=30),
         args=["proaudio"],
         id="mcp_sync_proaudio",
         replace_existing=True
     )
 
-    # Universal Sync: 06:00 AM Daily
+    # Universal Sync: 03:00 AM Daily (also triggered externally via cron-job.org)
     scheduler.add_job(
         run_universal_sync_job,
-        CronTrigger(hour=6, minute=0),
+        CronTrigger(hour=3, minute=0),
         id="universal_product_sync",
         replace_existing=True
     )
