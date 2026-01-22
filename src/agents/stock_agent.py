@@ -258,31 +258,53 @@ class StockListingsAgent:
             return {"status": "failed", "error": str(e)}
     
     async def calculate_retail_price(
-        self, 
-        cost_price: float, 
-        supplier_id: str, 
-        category: Optional[str] = None
+        self,
+        cost_price: float,
+        supplier_id: str,
+        category: Optional[str] = None,
+        instruction: str = 'cost',
+        supplier_name: Optional[str] = None,
+        markup_pct_override: Optional[float] = None
     ) -> float:
-        """Calculate retail price from cost using supplier markup rules."""
+        """Calculate retail price from cost using supplier markup rules.
+
+        Args:
+            cost_price: The cost/input price
+            supplier_id: Supplier ID for looking up pricing rules
+            category: Product category for category-specific markups
+            instruction: 'retail' if price is already retail, 'cost' if markup needed
+            supplier_name: Optional supplier name for logging
+            markup_pct_override: If provided, use this markup instead of rule lookup
+        """
+        # If instruction indicates price is already retail, return as-is
+        if instruction == 'retail':
+            return round(cost_price, 2)
+
+        # Use override markup if provided
+        if markup_pct_override is not None:
+            retail_price = cost_price * (1 + (markup_pct_override / 100.0))
+            return round(retail_price, 2)
+
+        # Otherwise, look up pricing rules
         rule = await self.get_pricing_rule(supplier_id)
-        
+
         if not rule:
             markup_pct = 30.0  # Default
-            logger.warning("using_default_markup", supplier_id=supplier_id)
+            logger.warning("using_default_markup", supplier_id=supplier_id, supplier_name=supplier_name)
         else:
             pricing_type = rule.get('pricing_type', 'cost')
-            
+
             if pricing_type == 'retail':
-                return cost_price  # Use as-is
-            
+                return round(cost_price, 2)  # Use as-is
+
             markup_pct = rule.get('default_markup_pct', 30.0)
-            
+
             # Check category-specific markup
             if category and rule.get('category_markups'):
                 category_markups = rule.get('category_markups', {})
                 if category in category_markups:
                     markup_pct = category_markups[category]
-        
+
         retail_price = cost_price * (1 + (markup_pct / 100.0))
         return round(retail_price, 2)
     
