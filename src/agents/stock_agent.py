@@ -453,7 +453,7 @@ class StockListingsAgent:
                     logger.error("invalid_product_name_rejected", queue_id=queue_id, name=product_name)
                     return {"status": "failed", "error": f"Invalid product name rejected: {product_name}"}
                 
-                if check_sku in ['name', 'sku', 'xyz'] or any(bad in check_sku for bad in bad_strings):
+                if check_sku in ['name', 'sku', 'xyz'] or any(bad in check_sku for bad in contains_bad):
                      logger.error("invalid_sku_rejected", queue_id=queue_id, sku=product['sku'])
                      return {"status": "failed", "error": f"Invalid SKU rejected: {product['sku']}"}
 
