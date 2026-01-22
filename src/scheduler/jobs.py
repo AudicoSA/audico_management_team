@@ -7,6 +7,7 @@ from src.connectors.opencart import OpenCartConnector
 from src.utils.logging import AgentLogger
 
 from src.scheduler.universal_sync import UniversalProductSyncer
+from src.jobs.sync_all_suppliers import MCPSyncOrchestrator
 
 logger = AgentLogger("APSScheduler")
 
@@ -42,6 +43,16 @@ async def run_universal_sync_job():
     except Exception as e:
         logger.error("universal_sync_job_failed", error=str(e))
 
+async def run_mcp_sync_job(supplier_key: str):
+    """Wrapper to run MCP supplier sync."""
+    logger.info("mcp_sync_job_started", supplier=supplier_key)
+    try:
+        orchestrator = MCPSyncOrchestrator()
+        await orchestrator.sync_single_with_logging(supplier_key)
+        logger.info("mcp_sync_job_completed", supplier=supplier_key)
+    except Exception as e:
+        logger.error("mcp_sync_job_failed", supplier=supplier_key, error=str(e))
+
 def setup_scheduler():
     """Configure and start the scheduler."""
     # Esquire: 08:00 AM Daily
@@ -76,6 +87,15 @@ def setup_scheduler():
         run_upload_poller_job,
         CronTrigger(minute="*"),
         id="poll_pending_uploads",
+        replace_existing=True
+    )
+
+    # Pro Audio MCP Sync: 05:00 AM Daily (before universal sync)
+    scheduler.add_job(
+        run_mcp_sync_job,
+        CronTrigger(hour=5, minute=0),
+        args=["proaudio"],
+        id="mcp_sync_proaudio",
         replace_existing=True
     )
 
