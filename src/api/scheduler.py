@@ -45,3 +45,31 @@ async def stop_scheduler_api():
         scheduler.shutdown()
         return {"status": "stopped"}
     return {"status": "not_running"}
+
+@router.post("/run-universal-sync")
+async def run_universal_sync(background_tasks: BackgroundTasks):
+    """
+    Trigger the universal product sync (price + stock updates).
+    
+    This endpoint is designed to be called by external cron services like:
+    - cron-job.org
+    - Railway Cron (with public URL)
+    - GitHub Actions
+    
+    Schedule: Daily at 6:00 AM (or whenever you configure external cron)
+    """
+    from src.scheduler.jobs import universal_syncer
+    from src.utils.logging import AgentLogger
+    
+    logger = AgentLogger("UniversalSyncAPI")
+    logger.info("universal_sync_triggered_via_api")
+    
+    # Run in background so the HTTP response returns immediately
+    background_tasks.add_task(universal_syncer.sync_all_products, dry_run=False)
+    
+    return {
+        "status": "started",
+        "message": "Universal product sync started in background",
+        "note": "Check /api/logs for progress"
+    }
+
