@@ -1,9 +1,14 @@
+import json
+import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from src.aligner.engine import AlignmentEngine
 from src.connectors.supabase import get_supabase_connector, SupabaseConnector
 from src.utils.logging import AgentLogger
+
+# Category engine - lazy loaded
+_category_engine = None
 
 router = APIRouter(tags=["Alignment"], prefix="/api/alignment")
 logger = AgentLogger("alignment_api")
@@ -30,39 +35,53 @@ class SupplierProduct(BaseModel):
 async def get_unmatched_products(limit: int = 20):
     """
     Get products from Supabase 'products' table that do NOT have an entry in 'product_matches'.
+    Optimized to handle large datasets without hitting query size limits.
     """
     sb = get_supabase_connector()
     
     try:
-        # 1. Get all matched IDs first
-        # Note: distinct() is good practice here if one product could match multiple (though unlikely in current schema)
-        matches = sb.client.table("product_matches").select("internal_product_id").execute()
-        matched_ids = [m['internal_product_id'] for m in matches.data]
+        # Strategy: Fetch products with price > 0, then filter out matched ones in Python
+        # This avoids the massive IN clause that was causing 500 errors
         
-        # 2. Query products NOT in the matched list AND with price > 0
-        # Hide zero-price products (e.g., "Ask for Price") until they get a real price
-        query = sb.client.table("products")\
+        # 1. Get recent products with valid prices (fetch more than limit to account for filtering)
+        fetch_limit = limit * 5  # Fetch 5x to have buffer after filtering
+        products_response = sb.client.table("products")\
             .select("id, sku, product_name, description, selling_price")\
             .gt("selling_price", 0)\
             .order("created_at", desc=True)\
-            .limit(limit)
-            
-        if matched_ids:
-            query = query.not_.in_("id", matched_ids)
-            
-        products = query.execute()
+            .limit(fetch_limit)\
+            .execute()
         
-        # 3. Format result
+        if not products_response.data:
+            return []
+        
+        # 2. Get product IDs from this batch
+        product_ids = [p['id'] for p in products_response.data]
+        
+        # 3. Check which of these IDs are already matched (smaller, targeted query)
+        matches_response = sb.client.table("product_matches")\
+            .select("internal_product_id")\
+            .in_("internal_product_id", product_ids)\
+            .execute()
+        
+        matched_ids = set(m['internal_product_id'] for m in matches_response.data)
+        
+        # 4. Filter and format results
         unmatched_data = []
-        for p in products.data:
-            unmatched_data.append({
-                "id": p['id'],
-                "sku": p['sku'],
-                "name": p['product_name'], 
-                "description": p.get('description'),
-                "price": p.get('selling_price', 0),
-                "supplier": "Internal" 
-            })
+        for p in products_response.data:
+            if p['id'] not in matched_ids:
+                unmatched_data.append({
+                    "id": p['id'],
+                    "sku": p['sku'],
+                    "name": p['product_name'], 
+                    "description": p.get('description'),
+                    "price": p.get('selling_price', 0),
+                    "supplier": "Internal" 
+                })
+                
+                # Stop once we have enough
+                if len(unmatched_data) >= limit:
+                    break
         
         return unmatched_data
         
@@ -141,7 +160,8 @@ async def ignore_product(request: IgnoreRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 class CreateRequest(BaseModel):
-    internal_product_id: str 
+    internal_product_id: str
+    category_ids: Optional[List[int]] = None  # Optional category IDs for the new product
 
 @router.post("/create")
 async def create_product(request: CreateRequest):
@@ -181,7 +201,8 @@ async def create_product(request: CreateRequest):
             "cost_price": rounded_price,
             "selling_price": product.get("selling_price", 0),
             "stock_level": product.get("total_stock", 0),
-            "status": "pending"
+            "status": "pending",
+            "category_ids": request.category_ids or []  # Store category IDs for product creation
         }
         
         sb.client.table("new_products_queue").insert(queue_data).execute()
@@ -201,3 +222,174 @@ async def create_product(request: CreateRequest):
     except Exception as e:
         logger.error("create_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CATEGORY ENDPOINTS
+# ============================================================================
+
+def get_category_engine():
+    """
+    Lazy load the category engine with the approved category tree.
+    """
+    global _category_engine
+    
+    if _category_engine is None:
+        # Try to load from JSON file first
+        tree_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "approved_category_tree.json"
+        )
+        
+        if os.path.exists(tree_path):
+            try:
+                from src.categorizer.engine import CategoryEngine
+                with open(tree_path, 'r', encoding='utf-8') as f:
+                    tree_data = json.load(f)
+                category_tree = tree_data.get('category_tree', tree_data)
+                _category_engine = CategoryEngine(category_tree)
+                logger.info("category_engine_loaded", path=tree_path)
+            except Exception as e:
+                logger.error("category_engine_load_failed", error=str(e))
+                return None
+        else:
+            logger.warning("category_tree_not_found", path=tree_path)
+            return None
+    
+    return _category_engine
+
+
+@router.get("/categories")
+async def get_categories():
+    """
+    Get all available categories from the approved tree.
+    Returns flat list with paths for dropdown selection.
+    """
+    engine = get_category_engine()
+    
+    if not engine:
+        # Fallback: try to load from OpenCart directly
+        from src.connectors.opencart import OpenCartConnector
+        oc = OpenCartConnector()
+        conn = oc._get_connection()
+        
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        c.category_id,
+                        cd.name,
+                        c.parent_id
+                    FROM oc_category c
+                    JOIN oc_category_description cd ON c.category_id = cd.category_id
+                    WHERE cd.language_id = 1 AND c.status = 1
+                    ORDER BY c.parent_id, c.sort_order
+                """)
+                
+                categories = cursor.fetchall()
+                
+                # Build paths
+                id_to_name = {}
+                id_to_parent = {}
+                for cat in categories:
+                    if isinstance(cat, dict):
+                        id_to_name[cat['category_id']] = cat['name']
+                        id_to_parent[cat['category_id']] = cat['parent_id']
+                    else:
+                        id_to_name[cat[0]] = cat[1]
+                        id_to_parent[cat[0]] = cat[2]
+                
+                def build_path(cat_id):
+                    path_parts = []
+                    current_id = cat_id
+                    while current_id and current_id in id_to_name:
+                        path_parts.insert(0, id_to_name[current_id])
+                        current_id = id_to_parent.get(current_id, 0)
+                    return " > ".join(path_parts)
+                
+                result = []
+                for cat in categories:
+                    cat_id = cat['category_id'] if isinstance(cat, dict) else cat[0]
+                    cat_name = cat['name'] if isinstance(cat, dict) else cat[1]
+                    result.append({
+                        "id": cat_id,
+                        "name": cat_name,
+                        "path": build_path(cat_id)
+                    })
+                
+                return result
+                
+        finally:
+            conn.close()
+    
+    # Return categories from engine
+    return [
+        {"id": info.get("id"), "name": info.get("name"), "path": path}
+        for path, info in engine.flat_categories.items()
+    ]
+
+
+@router.get("/suggest-category/{internal_product_id}")
+async def suggest_category(internal_product_id: str):
+    """
+    Get AI-suggested category for a product before creation.
+    Uses the CategoryEngine to analyze the product and suggest categories.
+    """
+    sb = get_supabase_connector()
+    engine = get_category_engine()
+    
+    # Fetch product details
+    p_response = sb.client.table("products").select("*").eq("id", internal_product_id).single().execute()
+    product = p_response.data
+    
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    if not engine:
+        # No category engine available - return empty suggestion
+        return {
+            "primary_category": None,
+            "secondary_categories": [],
+            "confidence": 0,
+            "reasoning": "Category engine not configured. Please create and approve a category tree first.",
+            "available": False
+        }
+    
+    try:
+        # Build product data for categorization
+        product_data = {
+            "product_id": internal_product_id,
+            "name": product.get("product_name", ""),
+            "sku": product.get("sku", ""),
+            "model": product.get("sku", ""),  # Use SKU as model
+            "description_snippet": product.get("description", "")[:500] if product.get("description") else "",
+            "manufacturer": product.get("brand", ""),
+            "price": product.get("selling_price", 0)
+        }
+        
+        # Get AI suggestion
+        assignment = await engine.categorize_product(product_data, allow_multiple=True)
+        
+        return {
+            "primary_category": {
+                "id": assignment.primary_category_id,
+                "path": assignment.primary_category_path
+            },
+            "secondary_categories": [
+                {"id": cid, "path": path} 
+                for cid, path in zip(assignment.secondary_category_ids, assignment.secondary_category_paths)
+            ],
+            "confidence": assignment.confidence,
+            "reasoning": assignment.reasoning,
+            "available": True
+        }
+        
+    except Exception as e:
+        logger.error("category_suggestion_failed", error=str(e))
+        return {
+            "primary_category": None,
+            "secondary_categories": [],
+            "confidence": 0,
+            "reasoning": f"Error generating suggestion: {str(e)}",
+            "available": False
+        }
