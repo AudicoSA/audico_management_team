@@ -408,8 +408,9 @@ class StockListingsAgent:
 
                 # --- VALIDATION GUARD ---
                 # Reduce risk of creating corrupted products (e.g. "Electronics Mega Store" or "name")
-                bad_strings = [
-                    'name', 'product name', 'model name', 'xyz', 
+                # Use EXACT matches for short words, substring for longer phrases
+                exact_match_bad = ['name', 'product name', 'model name', 'xyz', 'test', 'sample']
+                contains_bad = [
                     'electronics mega store', 'electronics galore', 
                     'electronic paradise', 'electronics superstore',
                     'electronics and gadgets store'
@@ -419,7 +420,14 @@ class StockListingsAgent:
                 check_sku = product['sku'].lower().strip() if product['sku'] else ""
                 check_model = product.get('model', '').lower().strip()
 
-                if not check_name or any(bad in check_name for bad in bad_strings):
+                # Reject if name is empty, equals a bad string exactly, or contains a long bad phrase
+                is_bad_name = (
+                    not check_name or 
+                    check_name in exact_match_bad or 
+                    any(bad in check_name for bad in contains_bad)
+                )
+                
+                if is_bad_name:
                     logger.error("invalid_product_name_rejected", queue_id=queue_id, name=product_name)
                     return {"status": "failed", "error": f"Invalid product name rejected: {product_name}"}
                 
