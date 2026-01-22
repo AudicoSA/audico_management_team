@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import dotenv from 'dotenv';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -62,7 +63,6 @@ async function runMCPSync(serverKey, sessionId = null) {
 
         // DEBUG: Read the file content to verify deployment
         try {
-            const fs = require('fs');
             if (fs.existsSync(syncScriptPath)) {
                 const content = fs.readFileSync(syncScriptPath, 'utf8');
                 console.log(`[${server.name}] Script preview:\n${content.slice(0, 300)}`);
