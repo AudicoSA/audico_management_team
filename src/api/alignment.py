@@ -40,48 +40,55 @@ async def get_unmatched_products(limit: int = 20):
     sb = get_supabase_connector()
     
     try:
-        # Strategy: Fetch products with price > 0, then filter out matched ones in Python
-        # This avoids the massive IN clause that was causing 500 errors
+        # Strategy: Fetch products in pages until we find enough unmatched ones
+        # This handles the case where recent products are all matched
         
-        # 1. Get recent products with valid prices (fetch more than limit to account for filtering)
-        fetch_limit = limit * 5  # Fetch 5x to have buffer after filtering
-        products_response = sb.client.table("products")\
-            .select("id, sku, product_name, description, selling_price")\
-            .gt("selling_price", 0)\
-            .order("created_at", desc=True)\
-            .limit(fetch_limit)\
-            .execute()
-        
-        if not products_response.data:
-            return []
-        
-        # 2. Get product IDs from this batch
-        product_ids = [p['id'] for p in products_response.data]
-        
-        # 3. Check which of these IDs are already matched (smaller, targeted query)
-        matches_response = sb.client.table("product_matches")\
-            .select("internal_product_id")\
-            .in_("internal_product_id", product_ids)\
-            .execute()
-        
-        matched_ids = set(m['internal_product_id'] for m in matches_response.data)
-        
-        # 4. Filter and format results
         unmatched_data = []
-        for p in products_response.data:
-            if p['id'] not in matched_ids:
-                unmatched_data.append({
-                    "id": p['id'],
-                    "sku": p['sku'],
-                    "name": p['product_name'], 
-                    "description": p.get('description'),
-                    "price": p.get('selling_price', 0),
-                    "supplier": "Internal" 
-                })
-                
-                # Stop once we have enough
-                if len(unmatched_data) >= limit:
-                    break
+        offset = 0
+        fetch_batch = 200  # Fetch 200 at a time
+        max_iterations = 10  # Don't fetch more than 2000 products
+        
+        while len(unmatched_data) < limit and offset < (fetch_batch * max_iterations):
+            # 1. Get a batch of products
+            products_response = sb.client.table("products")\
+                .select("id, sku, product_name, description, selling_price")\
+                .gt("selling_price", 0)\
+                .order("created_at", desc=True)\
+                .range(offset, offset + fetch_batch - 1)\
+                .execute()
+            
+            if not products_response.data:
+                break  # No more products
+            
+            # 2. Get product IDs from this batch
+            product_ids = [p['id'] for p in products_response.data]
+            
+            # 3. Check which of these IDs are already matched (in smaller chunks)
+            matched_ids = set()
+            for i in range(0, len(product_ids), 50):
+                chunk = product_ids[i:i+50]
+                matches_response = sb.client.table("product_matches")\
+                    .select("internal_product_id")\
+                    .in_("internal_product_id", chunk)\
+                    .execute()
+                matched_ids.update(m['internal_product_id'] for m in matches_response.data)
+            
+            # 4. Filter and format results
+            for p in products_response.data:
+                if p['id'] not in matched_ids:
+                    unmatched_data.append({
+                        "id": p['id'],
+                        "sku": p['sku'],
+                        "name": p['product_name'], 
+                        "description": p.get('description'),
+                        "price": p.get('selling_price', 0),
+                        "supplier": "Internal" 
+                    })
+                    
+                    if len(unmatched_data) >= limit:
+                        break
+            
+            offset += fetch_batch
         
         return unmatched_data
         
