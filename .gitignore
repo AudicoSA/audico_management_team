@@ -3,7 +3,7 @@
 .env.local
 **/.env
 **/.env.local
-dist/
+# NOTE: dist/ is NOT gitignored - TypeScript MCP servers need compiled JS committed
 .DS_Store
 __pycache__/
 *.pyc
