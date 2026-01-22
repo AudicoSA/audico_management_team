@@ -74,6 +74,7 @@ interface StoreProduct {
   description: string;
   short_description: string;
   prices: StoreProductPrice;
+  price_html: string;
   is_in_stock: boolean;
   images: StoreProductImage[];
   categories: StoreProductCategory[];
@@ -206,7 +207,7 @@ export class ProAudioMCPServer {
 
     console.log(`Starting sync session ${sessionId} for ${this.SUPPLIER_NAME}`);
     console.log(`Price logic: -${this.DISCOUNT_PERCENT}% then round to nearest R10`);
-    console.log(`Stock logic: Has price -> 10, No price (Ask for Price) -> 0`);
+    console.log(`Stock logic: Has price & in stock -> 10, "Ask/Call For Price" -> 0 (keeps price for alignment)`);
     if (options.dryRun) console.log("DRY RUN MODE - no changes will be saved");
 
     try {
@@ -378,15 +379,21 @@ export class ProAudioMCPServer {
       hasRealPrice = true;
     }
 
+    // Check if price_html indicates "Ask for Price" or "Call For Price" (out of stock)
+    const priceHtml = (product.price_html || "").toLowerCase();
+    const isAskForPrice = priceHtml.includes("ask for price") || priceHtml.includes("call for price");
+
     // Apply pricing logic:
-    // - Has price: Apply 10% discount, round to nearest R10, set stock to 10
-    // - No price (Ask for Price): Set price to 0, stock to 0
+    // - Has price AND not "Ask for Price": Apply 10% discount, round to nearest R10, set stock to 10
+    // - Has price BUT "Ask for Price": Keep price (for alignment), but set stock to 0
+    // - No price: Set price to 0, stock to 0
     let finalPrice = 0;
     let stockLevel = 0;
 
     if (hasRealPrice) {
       finalPrice = this.applyDiscountAndRound(rawPrice);
-      stockLevel = 10;
+      // Only set stock if NOT "Ask for Price"
+      stockLevel = isAskForPrice ? 0 : 10;
     }
 
     // Generate SKU if missing
