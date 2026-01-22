@@ -42,58 +42,117 @@ class MCPSyncOrchestrator:
         self.results = []
     
     async def sync_supplier(self, server: Dict) -> Dict:
-        """Sync a single MCP server via HTTP."""
+        """Sync a single MCP server via HTTP, polling until completion."""
         supplier_name = server["name"]
         endpoint = server["endpoint"]
-        
+
         logger.info("sync_supplier_start", supplier=supplier_name, endpoint=endpoint)
-        
+
         start_time = datetime.now()
-        
+
         try:
-            # Make HTTP POST request to MCP HTTP service
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                # 1. Start the sync (async - returns immediately with sessionId)
                 response = await client.post(
                     f"{MCP_SERVICE_URL}/sync/{endpoint}"
                 )
-                
-                duration = (datetime.now() - start_time).total_seconds()
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    logger.info("sync_supplier_success", 
-                               supplier=supplier_name, 
-                               duration=duration)
-                    
-                    return {
-                        "supplier": supplier_name,
-                        "status": "success",
-                        "duration": duration,
-                        "output": data.get("output", "")[:500],
-                        "error": None
-                    }
-                else:
-                    error_data = response.json() if response.headers.get("content-type") == "application/json" else {"error": response.text}
-                    
-                    logger.error("sync_supplier_failed", 
-                                supplier=supplier_name, 
-                                error=error_data.get("error", "Unknown error"))
-                    
+
+                if response.status_code != 200:
+                    error_data = response.json() if "application/json" in response.headers.get("content-type", "") else {"error": response.text}
                     return {
                         "supplier": supplier_name,
                         "status": "failed",
-                        "duration": duration,
+                        "duration": (datetime.now() - start_time).total_seconds(),
                         "output": None,
-                        "error": str(error_data.get("error", "Unknown error"))[:500]
+                        "error": str(error_data.get("error", "Failed to start sync"))[:500]
                     }
-                    
+
+                data = response.json()
+                session_id = data.get("sessionId")
+
+                if not session_id:
+                    # Old-style response without sessionId - treat as immediate success
+                    logger.info("sync_supplier_immediate", supplier=supplier_name)
+                    return {
+                        "supplier": supplier_name,
+                        "status": "success",
+                        "duration": (datetime.now() - start_time).total_seconds(),
+                        "output": data.get("output", "")[:500],
+                        "error": None
+                    }
+
+                # 2. Poll for completion (up to 5 minutes)
+                logger.info("sync_supplier_polling", supplier=supplier_name, session_id=session_id)
+                max_wait = 300  # 5 minutes
+                poll_interval = 5  # Check every 5 seconds
+                elapsed = 0
+
+                while elapsed < max_wait:
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
+
+                    status_response = await client.get(
+                        f"{MCP_SERVICE_URL}/sync-status/{session_id}"
+                    )
+
+                    if status_response.status_code != 200:
+                        continue  # Keep polling
+
+                    status_data = status_response.json()
+                    status = status_data.get("status")
+
+                    if status == "completed":
+                        result = status_data.get("result", {})
+                        duration = (datetime.now() - start_time).total_seconds()
+                        logger.info("sync_supplier_success",
+                                   supplier=supplier_name,
+                                   duration=duration)
+                        return {
+                            "supplier": supplier_name,
+                            "status": "success",
+                            "duration": duration,
+                            "output": result.get("output", "")[:500],
+                            "error": None
+                        }
+
+                    elif status == "failed":
+                        duration = (datetime.now() - start_time).total_seconds()
+                        error = status_data.get("error", "Unknown error")
+                        logger.error("sync_supplier_failed",
+                                    supplier=supplier_name,
+                                    error=error)
+                        return {
+                            "supplier": supplier_name,
+                            "status": "failed",
+                            "duration": duration,
+                            "output": None,
+                            "error": str(error)[:500]
+                        }
+
+                    # Still running, continue polling
+                    logger.debug("sync_supplier_still_running",
+                                supplier=supplier_name,
+                                elapsed=elapsed)
+
+                # Timeout waiting for completion
+                duration = (datetime.now() - start_time).total_seconds()
+                logger.error("sync_supplier_poll_timeout",
+                            supplier=supplier_name,
+                            duration=duration)
+                return {
+                    "supplier": supplier_name,
+                    "status": "error",
+                    "duration": duration,
+                    "output": None,
+                    "error": f"Sync still running after {max_wait}s"
+                }
+
         except httpx.TimeoutException as e:
             duration = (datetime.now() - start_time).total_seconds()
-            logger.error("sync_supplier_timeout", 
-                        supplier=supplier_name, 
+            logger.error("sync_supplier_timeout",
+                        supplier=supplier_name,
                         error=str(e))
-            
+
             return {
                 "supplier": supplier_name,
                 "status": "error",
@@ -101,13 +160,13 @@ class MCPSyncOrchestrator:
                 "output": None,
                 "error": f"Timeout after {duration}s"
             }
-            
+
         except Exception as e:
             duration = (datetime.now() - start_time).total_seconds()
-            logger.error("sync_supplier_error", 
-                        supplier=supplier_name, 
+            logger.error("sync_supplier_error",
+                        supplier=supplier_name,
                         error=str(e))
-            
+
             return {
                 "supplier": supplier_name,
                 "status": "error",
