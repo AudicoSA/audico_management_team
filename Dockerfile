@@ -1,4 +1,5 @@
 # Use official Playwright base image with all browsers and dependencies pre-installed
+# Cache-bust: 2026-01-23-v2
 FROM mcr.microsoft.com/playwright:v1.42.1-jammy
 
 # Set working directory
