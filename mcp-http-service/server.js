@@ -116,12 +116,14 @@ async function runMCPSync(serverKey, sessionId = null) {
                 });
             } else {
                 console.error(`[${server.name}] ❌ Sync failed with code ${code}`);
+                console.error(`[${server.name}] FULL STDERR:\n${stderr}`);
                 reject({
                     success: false,
                     supplier: server.name,
                     duration: parseFloat(duration),
                     output: null,
-                    error: stderr.slice(-500) || `Process exited with code ${code}`
+                    // Take first 800 chars to see the actual module name
+                    error: stderr.slice(0, 800) || `Process exited with code ${code}`
                 });
             }
         });
