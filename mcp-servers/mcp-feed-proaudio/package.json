@@ -22,11 +22,11 @@
     "@audico/shared": "file:../shared",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@supabase/supabase-js": "^2.39.0",
-    "@types/uuid": "^10.0.0",
+    "@types/uuid": "^8.3.4",
     "axios": "^1.13.2",
     "dotenv": "^16.3.1",
     "playwright": "^1.40.0",
-    "uuid": "^13.0.0",
+    "uuid": "^8.3.2",
     "zod": "^4.3.5"
   },
   "devDependencies": {
