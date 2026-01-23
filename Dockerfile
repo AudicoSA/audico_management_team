@@ -22,6 +22,7 @@ COPY package*.json ./
 COPY mcp-servers/package*.json ./mcp-servers/
 COPY mcp-servers/shared/package*.json ./mcp-servers/shared/
 COPY mcp-servers/mcp-feed-planetworld/package*.json ./mcp-servers/mcp-feed-planetworld/
+COPY mcp-servers/mcp-feed-proaudio/package*.json ./mcp-servers/mcp-feed-proaudio/
 COPY mcp-http-service/package*.json ./mcp-http-service/
 
 # Ensure dev dependencies are installed
@@ -31,6 +32,7 @@ ENV NODE_ENV=development
 # Note: The base image already has Playwright browsers installed
 RUN cd mcp-servers/shared && npm ci --unsafe-perm
 RUN cd mcp-servers/mcp-feed-planetworld && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-proaudio && npm ci --unsafe-perm
 RUN cd mcp-http-service && npm ci --unsafe-perm
 
 # Add --disable-dev-shm-usage flag support via env var if needed, 
