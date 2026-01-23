@@ -22,18 +22,29 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 COPY package*.json ./
 COPY mcp-servers/package*.json ./mcp-servers/
 COPY mcp-servers/shared/package*.json ./mcp-servers/shared/
+COPY mcp-servers/mcp-feed-connoisseur/package*.json ./mcp-servers/mcp-feed-connoisseur/
+COPY mcp-servers/mcp-feed-esquire/package*.json ./mcp-servers/mcp-feed-esquire/
+COPY mcp-servers/mcp-feed-nology/package*.json ./mcp-servers/mcp-feed-nology/
 COPY mcp-servers/mcp-feed-planetworld/package*.json ./mcp-servers/mcp-feed-planetworld/
 COPY mcp-servers/mcp-feed-proaudio/package*.json ./mcp-servers/mcp-feed-proaudio/
+COPY mcp-servers/mcp-feed-scoop/package*.json ./mcp-servers/mcp-feed-scoop/
+COPY mcp-servers/mcp-feed-smart-homes/package*.json ./mcp-servers/mcp-feed-smart-homes/
+COPY mcp-servers/mcp-feed-solution-technologies/package*.json ./mcp-servers/mcp-feed-solution-technologies/
 COPY mcp-http-service/package*.json ./mcp-http-service/
 
 # Ensure dev dependencies are installed
 ENV NODE_ENV=development
 
-# Install Node dependencies
-# Note: The base image already has Playwright browsers installed
+# Install Node dependencies for all MCP feeds
 RUN cd mcp-servers/shared && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-connoisseur && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-esquire && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-nology && npm ci --unsafe-perm
 RUN cd mcp-servers/mcp-feed-planetworld && npm ci --unsafe-perm
 RUN cd mcp-servers/mcp-feed-proaudio && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-scoop && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-smart-homes && npm ci --unsafe-perm
+RUN cd mcp-servers/mcp-feed-solution-technologies && npm ci --unsafe-perm
 RUN cd mcp-http-service && npm ci --unsafe-perm
 
 # Add --disable-dev-shm-usage flag support via env var if needed, 
