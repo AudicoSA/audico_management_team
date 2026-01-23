@@ -1,8 +1,7 @@
 # Exclude dependency directories
 node_modules
 **/node_modules
-dist
-**/dist
+# NOTE: dist/ is NOT excluded - TypeScript MCP servers need compiled JS in container
 
 # Exclude git
 .git
