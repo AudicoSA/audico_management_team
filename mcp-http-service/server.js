@@ -10,8 +10,8 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// Use MCP_PORT for internal binding, avoid PORT which is used by the main Python app
+const PORT = process.env.MCP_PORT || 3000;
 
 // Middleware
 app.use(cors());
