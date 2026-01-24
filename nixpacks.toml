@@ -1,4 +1,4 @@
-# Last updated: 2026-01-18 (Force Rebuild)
+# Last updated: 2026-01-24 (Force Rebuild Debug)
 [phases.setup]
 nixPkgs = [
     "python311", 

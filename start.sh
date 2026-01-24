@@ -13,9 +13,9 @@ python -m uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} &
 
 # Start MCP HTTP Service (Node.js) in background
 # Start MCP HTTP Service (Node.js) in background
-echo "🚀 Starting MCP Service (v3)..."
-echo "DEBUG: Checking server.js..."
-ls -la mcp-servers/mcp-http-service/server.js
+echo "🚀 Starting MCP Service (v4 Debug)..."
+echo "DEBUG: Verifying server.js content:"
+grep -A 15 "const MCP_SERVERS = {" mcp-http-service/server.js
 cd mcp-http-service && npm start &
 
 # Wait for any process to exit
