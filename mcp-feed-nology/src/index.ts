@@ -17,6 +17,8 @@ import {
   ProductAutoTagger,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -316,11 +318,20 @@ export class NologyMCPServer implements MCPSupplierTool {
       category_name,
     });
 
+    // Classify use case for AI consultation filtering
+    const brand = nologyProduct.Brand || this.extractBrand(nologyProduct.Model);
+    const useCase = classifyUseCase({
+      productName: nologyProduct.ShortDescription || nologyProduct.Model,
+      categoryName: category_name,
+      brand: brand,
+      description: nologyProduct.LongDescription,
+    });
+
     return {
       product_name: nologyProduct.ShortDescription || nologyProduct.Model,
       sku: nologyProduct.GlobalSKU,
       model: nologyProduct.Model,
-      brand: nologyProduct.Brand || this.extractBrand(nologyProduct.Model),
+      brand: brand,
       category_name,
       description: nologyProduct.LongDescription,
 
@@ -346,7 +357,8 @@ export class NologyMCPServer implements MCPSupplierTool {
       // Build #10: Consultation mode auto-tagging
       scenario_tags: autoTags.scenario_tags,
       mounting_type: autoTags.mounting_type,
-      exclude_from_consultation: autoTags.exclude_from_consultation,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase) || autoTags.exclude_from_consultation,
+      use_case: useCase,
     };
   }
 

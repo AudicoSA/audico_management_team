@@ -16,6 +16,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // Reuse Solution Technologies types
@@ -209,13 +211,25 @@ export class SmartHomesMCPServer implements MCPSupplierTool {
     const sellingPrice = costInclVat * 1.25; // 15% VAT + 25% margin
     const marginPercentage = ((sellingPrice - costExclVat) / costExclVat) * 100;
 
+    const brand = shProduct.vendor || 'Smart Homes';
+    const categoryName = shProduct.product_type || 'Electronics';
+    const description = shProduct.body_html?.replace(/<[^>]*>/g, ' ').trim().substring(0, 500);
+
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: shProduct.title,
+      categoryName: categoryName,
+      brand: brand,
+      description: description,
+    });
+
     return {
       product_name: shProduct.title,
       sku: mainVariant.sku || `sh-${shProduct.id}`,
       model: shProduct.handle,
-      brand: shProduct.vendor || 'Smart Homes',
-      category_name: shProduct.product_type || 'Electronics',
-      description: shProduct.body_html?.replace(/<[^>]*>/g, ' ').trim().substring(0, 500),
+      brand: brand,
+      category_name: categoryName,
+      description: description,
       cost_price: costExclVat,
       retail_price: sellingPrice,
       selling_price: sellingPrice,
@@ -229,6 +243,8 @@ export class SmartHomesMCPServer implements MCPSupplierTool {
       supplier_id: this.supplier!.id,
       supplier_sku: mainVariant.sku || `sh-${shProduct.id}`,
       active: mainVariant.available,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 }

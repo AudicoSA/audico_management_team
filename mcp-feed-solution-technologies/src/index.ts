@@ -16,6 +16,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -417,11 +419,21 @@ export class SolutionTechnologiesMCPServer implements MCPSupplierTool {
     // Parse HTML description
     const description = this.parseHtmlDescription(stProduct.body_html);
 
+    const brand = stProduct.vendor || 'Solution Technologies';
+
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: stProduct.title,
+      categoryName: category_name,
+      brand: brand,
+      description: description,
+    });
+
     return {
       product_name: stProduct.title,
       sku: mainVariant.sku || `st-${stProduct.id}`,
       model: stProduct.handle,
-      brand: stProduct.vendor || 'Solution Technologies',
+      brand: brand,
       category_name,
       description,
 
@@ -449,6 +461,8 @@ export class SolutionTechnologiesMCPServer implements MCPSupplierTool {
       supplier_sku: mainVariant.sku || `st-${stProduct.id}`,
 
       active: mainVariant.available,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 

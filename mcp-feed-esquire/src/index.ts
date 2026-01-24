@@ -17,6 +17,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -288,12 +290,23 @@ export class EsquireMCPServer implements MCPSupplierTool {
     const sellingPrice = costPrice * 1.38;
     const marginPercentage = 38;
 
+    const brand = vendor || this.extractBrand(productName);
+    const categoryName = category || this.extractCategory(productName);
+
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: productName,
+      categoryName: categoryName,
+      brand: brand,
+      description: description,
+    });
+
     return {
       product_name: productName,
       sku: sku,
       model: sku,
-      brand: vendor || this.extractBrand(productName),
-      category_name: category || this.extractCategory(productName),
+      brand: brand,
+      category_name: categoryName,
       description: description,
 
       cost_price: costPrice,
@@ -317,6 +330,8 @@ export class EsquireMCPServer implements MCPSupplierTool {
       supplier_sku: sku,
 
       active: stock > 0,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 

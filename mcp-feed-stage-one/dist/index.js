@@ -480,6 +480,12 @@ class StageOneMCPServer {
         const brand = product.brand || this.extractBrand(product.name);
         // Generate SKU from slug if needed
         const sku = product.sku || this.slugToSku(product.productUrl);
+        // Classify use case for AI consultation filtering
+        const useCase = (0, shared_1.classifyUseCase)({
+            productName: product.name,
+            categoryName: product.category,
+            brand: brand,
+        });
         return {
             product_name: product.name,
             sku: sku,
@@ -501,6 +507,8 @@ class StageOneMCPServer {
             supplier_id: this.supplier.id,
             supplier_sku: sku,
             active: product.inStock,
+            use_case: useCase,
+            exclude_from_consultation: (0, shared_1.shouldExcludeFromConsultation)(useCase),
         };
     }
     slugToSku(productUrl) {

@@ -17,6 +17,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -283,12 +285,23 @@ export class ScoopMCPServer implements MCPSupplierTool {
     const marginPercentage =
       dealerPrice > 0 ? ((retailPrice - dealerPrice) / dealerPrice) * 100 : 0;
 
+    const brand = manufacturer || this.extractBrand(description);
+    const categoryName = this.extractCategory(description);
+
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: description,
+      categoryName: categoryName,
+      brand: brand,
+      description: description,
+    });
+
     return {
       product_name: description,
       sku: sku,
       model: sku,
-      brand: manufacturer || this.extractBrand(description),
-      category_name: this.extractCategory(description),
+      brand: brand,
+      category_name: categoryName,
       description: description,
 
       cost_price: dealerPrice,
@@ -311,6 +324,8 @@ export class ScoopMCPServer implements MCPSupplierTool {
       supplier_sku: sku,
 
       active: total_stock > 0,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 

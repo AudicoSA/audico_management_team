@@ -11,7 +11,7 @@
     "test": "tsx src/test.ts"
   },
   "dependencies": {
-    "@audico/shared": "workspace:*",
+    "@audico/shared": "file:../shared",
     "axios": "^1.7.9",
     "dotenv": "^16.4.5"
   },

@@ -16,6 +16,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -408,6 +410,14 @@ export class Stock2ShopMCPServer implements MCPSupplierTool {
     // Extract category from product title or meta
     const category_name = this.extractCategory(s2sProduct);
 
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: s2sProduct.title,
+      categoryName: category_name,
+      brand: brand,
+      description: s2sProduct.body_html,
+    });
+
     return {
       product_name: s2sProduct.title,
       sku: variant.sku,
@@ -443,6 +453,8 @@ export class Stock2ShopMCPServer implements MCPSupplierTool {
       supplier_sku: s2sProduct.source_product_code,
 
       active: s2sProduct.active,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 

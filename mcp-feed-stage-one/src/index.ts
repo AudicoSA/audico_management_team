@@ -22,6 +22,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -563,6 +565,13 @@ export class StageOneMCPServer implements MCPSupplierTool {
     // Generate SKU from slug if needed
     const sku = product.sku || this.slugToSku(product.productUrl);
 
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: product.name,
+      categoryName: product.category,
+      brand: brand,
+    });
+
     return {
       product_name: product.name,
       sku: sku,
@@ -589,6 +598,8 @@ export class StageOneMCPServer implements MCPSupplierTool {
       supplier_sku: sku,
 
       active: product.inStock,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 

@@ -47,6 +47,7 @@ export interface UnifiedProduct {
   scenario_tags?: string[];        // ['commercial_bgm', 'home_cinema', 'conference']
   mounting_type?: string;          // 'ceiling' | 'wall' | 'floor' | 'in-wall'
   exclude_from_consultation?: boolean;  // true for brackets, cables, car audio
+  use_case?: 'Home' | 'Commercial' | 'Office' | 'Club' | 'Both' | 'car_audio';
 }
 
 // ============================================

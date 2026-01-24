@@ -17,6 +17,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 // ============================================
@@ -432,11 +434,21 @@ export class ConnoisseurMCPServer implements MCPSupplierTool {
     // Extract SKU from product (e.g., CON000859)
     const sku = mainVariant.sku || `con-${conProduct.id}`;
 
+    const brand = conProduct.vendor || 'Connoisseur';
+
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: conProduct.title,
+      categoryName: category_name,
+      brand: brand,
+      description: description,
+    });
+
     return {
       product_name: conProduct.title,
       sku,
       model: conProduct.handle,
-      brand: conProduct.vendor || 'Connoisseur',
+      brand: brand,
       category_name,
       description,
 
@@ -465,6 +477,8 @@ export class ConnoisseurMCPServer implements MCPSupplierTool {
       supplier_sku: sku,
 
       active: mainVariant.available,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 

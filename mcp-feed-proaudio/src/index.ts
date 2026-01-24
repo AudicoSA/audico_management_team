@@ -17,6 +17,8 @@ import {
   PricingCalculator,
   logger,
   logSync,
+  classifyUseCase,
+  shouldExcludeFromConsultation,
 } from '@audico/shared';
 
 interface ProAudioProduct {
@@ -283,12 +285,22 @@ export class ProAudioMCPServer implements MCPSupplierTool {
     const costPrice = scrapedPrice * 0.80; // 20% off scraped price
     const marginPercentage = ((retailPrice - costPrice) / costPrice) * 100;
 
+    const brand = paProduct.brand || 'Pro Audio';
+    const categoryName = paProduct.category || 'Audio';
+
+    // Classify use case for AI consultation filtering
+    const useCase = classifyUseCase({
+      productName: paProduct.name,
+      categoryName: categoryName,
+      brand: brand,
+    });
+
     return {
       product_name: paProduct.name,
       sku: paProduct.sku,
       model: paProduct.name, // Use product name as model, not SKU
-      brand: paProduct.brand || 'Pro Audio',
-      category_name: paProduct.category || 'Audio',
+      brand: brand,
+      category_name: categoryName,
       cost_price: parseFloat(costPrice.toFixed(2)),
       retail_price: parseFloat(retailPrice.toFixed(2)),
       selling_price: parseFloat(retailPrice.toFixed(2)),
@@ -302,6 +314,8 @@ export class ProAudioMCPServer implements MCPSupplierTool {
       supplier_id: this.supplier!.id,
       supplier_sku: paProduct.sku,
       active: paProduct.inStock,
+      use_case: useCase,
+      exclude_from_consultation: shouldExcludeFromConsultation(useCase),
     };
   }
 }
