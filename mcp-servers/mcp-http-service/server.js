@@ -26,7 +26,7 @@ app.use((req, res, next) => {
 // MCP server configurations
 const MCP_SERVERS = {
     'nology': { path: 'mcp-feed-nology', name: 'Nology' },
-    'stock2shop': { path: 'mcp-feed-stock2shop', name: 'Stock2Shop' },
+    // 'stock2shop': { path: 'mcp-feed-stock2shop', name: 'Stock2Shop' },
     'solution-technologies': { path: 'mcp-feed-solution-technologies', name: 'Solution Technologies' },
     'esquire': { path: 'mcp-feed-esquire', name: 'Esquire' },
     'scoop': { path: 'mcp-feed-scoop', name: 'Scoop' },
