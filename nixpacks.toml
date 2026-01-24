@@ -42,6 +42,8 @@ cmds = [
   "cd mcp-http-service && npm install",
   "cd mcp-servers/shared && npm install && npm run build",
   "cd mcp-servers/mcp-feed-planetworld && npm install && npm run build",
+  "cd mcp-servers/mcp-feed-stage-one && npm install && npm run build",
+  "cd mcp-servers/mcp-feed-linkqage && npm install && npm run build",
   "cd mcp-servers/mcp-feed-planetworld && npx playwright install chromium --with-deps"
 ]
 
