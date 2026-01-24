@@ -28,6 +28,7 @@ MCP_SERVERS = [
     {"name": "Connoisseur", "endpoint": "connoisseur", "enabled": True},
     {"name": "ProAudio", "endpoint": "proaudio", "enabled": True},
     {"name": "Stage-One", "endpoint": "stage-one", "enabled": True},
+    {"name": "Linkqage", "endpoint": "linkqage", "enabled": True},
     {"name": "Planet World", "endpoint": "planetworld", "enabled": True},
     # Disabled servers (have issues per Claude's report)
     {"name": "Homemation", "endpoint": "homemation", "enabled": False},
