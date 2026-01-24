@@ -33,7 +33,8 @@ const MCP_SERVERS = {
     'smart-homes': { path: 'mcp-feed-smart-homes', name: 'Smart Homes' },
     'connoisseur': { path: 'mcp-feed-connoisseur', name: 'Connoisseur' },
     'proaudio': { path: 'mcp-feed-proaudio', name: 'ProAudio' },
-
+    'stage-one': { path: 'mcp-feed-stage-one', name: 'Stage-One' },
+    'linkqage': { path: 'mcp-feed-linkqage', name: 'Linkqage' },
 };
 
 /**
