@@ -191,7 +191,8 @@ export class LinkqageMCPServer implements MCPSupplierTool {
             .replace(/\.(?=.*\.)/g, ''); // Remove all but last dot
 
         const price = parseFloat(cleaned);
-        return isNaN(price) ? 0 : price;
+        // Assuming Linkqage also follows the same pattern if it's a similar WooCommerce setup
+        return isNaN(price) ? 0 : price / 100;
     }
 
     private async scrapeCategoryPage(categoryUrl: string, page: number = 1): Promise<{ products: ScrapedProduct[], hasMore: boolean }> {

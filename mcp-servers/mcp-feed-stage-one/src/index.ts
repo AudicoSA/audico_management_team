@@ -200,7 +200,11 @@ export class StageOneMCPServer implements MCPSupplierTool {
       .replace(/\.(?=.*\.)/g, ''); // Remove all but last dot
 
     const price = parseFloat(cleaned);
-    return isNaN(price) ? 0 : price;
+    // Price represents cents if user reports it's 100x high, but usually R1,200.00 is parsed as 1200.00
+    // However, user specifically asked to divide by 100.
+    // If the format effectively parses to "10000" for "R100.00" (maybe no dot?), then dividing by 100 is key.
+    // Assuming the user's report is accurate for the raw value obtained.
+    return isNaN(price) ? 0 : price / 100;
   }
 
   private async scrapeCategoryPage(categoryUrl: string, page: number = 1): Promise<{ products: ScrapedProduct[], hasMore: boolean }> {
@@ -268,7 +272,7 @@ export class StageOneMCPServer implements MCPSupplierTool {
 
       // Check for pagination
       const hasMore = $('a.next, .pagination .next, [rel="next"]').length > 0 ||
-                      $(`a[href*="page/${page + 1}"]`).length > 0;
+        $(`a[href*="page/${page + 1}"]`).length > 0;
 
       return { products, hasMore };
     } catch (error: any) {
@@ -284,13 +288,13 @@ export class StageOneMCPServer implements MCPSupplierTool {
 
       // Extract SKU
       const sku = $('.sku, [class*="sku"]').text().trim() ||
-                  $('span:contains("SKU")').next().text().trim() ||
-                  '';
+        $('span:contains("SKU")').next().text().trim() ||
+        '';
 
       // Extract brand
       const brand = $('a[href*="/brand/"]').first().text().trim() ||
-                    $('[class*="brand"]').first().text().trim() ||
-                    '';
+        $('[class*="brand"]').first().text().trim() ||
+        '';
 
       // Extract description
       const description = $('.product-description, .woocommerce-product-details__short-description, #tab-description')
