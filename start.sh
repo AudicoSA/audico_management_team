@@ -12,9 +12,10 @@ echo "🚀 Starting Python Backend..."
 python -m uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} &
 
 # Start MCP HTTP Service (Node.js) in background
-echo "🚀 Starting MCP Service v2..."
-echo "DEBUG: server_v2.js stats:"
-ls -la mcp-http-service/server_v2.js
+# Start MCP HTTP Service (Node.js) in background
+echo "🚀 Starting MCP Service (v3)..."
+echo "DEBUG: Checking server.js..."
+ls -la mcp-servers/mcp-http-service/server.js
 cd mcp-http-service && npm start &
 
 # Wait for any process to exit
