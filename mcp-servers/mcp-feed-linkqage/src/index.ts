@@ -558,8 +558,8 @@ export class LinkqageMCPServer implements MCPSupplierTool {
             description: '',
 
             cost_price: costPrice,
-            retail_price: pricing.selling_price,
-            selling_price: pricing.selling_price,
+            retail_price: this.roundToR10(pricing.selling_price),
+            selling_price: this.roundToR10(pricing.selling_price),
             margin_percentage: pricing.margin_percentage,
 
             total_stock: product.inStock ? 10 : 0,
@@ -578,6 +578,10 @@ export class LinkqageMCPServer implements MCPSupplierTool {
             use_case: useCase,
             exclude_from_consultation: shouldExcludeFromConsultation(useCase),
         };
+    }
+
+    private roundToR10(price: number): number {
+        return Math.floor(price / 10) * 10;
     }
 
     private slugToSku(productUrl: string): string {
