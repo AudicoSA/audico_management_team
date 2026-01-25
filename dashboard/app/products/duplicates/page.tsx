@@ -66,10 +66,55 @@ export default function DuplicatesPage() {
         }
     }
 
+    const handleMerge = async (duplicate: Duplicate) => {
+        if (!duplicate.product_ids) return;
+
+        // Parse IDs (string "1,2,3" -> [1,2,3])
+        const ids = duplicate.product_ids.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+
+        if (ids.length < 2) {
+            alert("Need at least 2 products to merge.");
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to merge these ${ids.length} products?\n\nThis will keep the Best product (Aligned or Newest) and DELETE the others.\n\nIDs: ${ids.join(', ')}`)) {
+            return;
+        }
+
+        try {
+            setLoading(true);
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+            const res = await fetch(`${apiUrl}/api/products/merge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    source_product_ids: ids,
+                    determine_target: true
+                })
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.success) {
+                alert(`Success! Merged into Product ID ${data.target_id}.\nDeleted IDs: ${data.deleted_ids.join(', ')}`);
+                fetchData(); // Refresh
+            } else {
+                alert(`Merge Failed: ${data.detail || 'Unknown error'}`);
+            }
+
+        } catch (err) {
+            console.error(err);
+            alert("Error merging products.");
+        } finally {
+            setLoading(false);
+        }
+    }
+
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
-                <div className="text-gray-500">Loading duplicate analysis...</div>
+                <div className="text-gray-500">Processing...</div>
             </div>
         )
     }
@@ -185,7 +230,10 @@ return (
                                             </div>
                                         )}
                                         <div className="mt-3 flex space-x-2">
-                                            <button className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                                            <button
+                                                onClick={() => handleMerge(dup)}
+                                                className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                                            >
                                                 Merge Products
                                             </button>
                                             <button className="px-4 py-2 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300">

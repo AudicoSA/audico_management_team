@@ -286,28 +286,81 @@ async def get_potential_duplicates():
 
 @router.post("/merge")
 async def merge_products(payload: Dict[str, Any]):
-    """Merge duplicate products (keep one, delete others)."""
+    """
+    Merge duplicate products (keep one, delete others).
+    Smart Logic:
+    1. If target_product_id provided, use it.
+    2. Else, if determine_target=True, find best target (Aligned > Newest).
+    3. Delete source products.
+    """
     try:
-        target_id = payload.get('target_product_id')
         source_ids = payload.get('source_product_ids', [])
+        target_id = payload.get('target_product_id')
+        find_target = payload.get('determine_target', False)
         
-        if not target_id or not source_ids:
-            raise HTTPException(status_code=400, detail="Missing target or source product IDs")
-        
+        if not source_ids:
+            raise HTTPException(status_code=400, detail="Missing source product IDs")
+            
         opencart = get_opencart_connector()
         supabase = get_supabase_connector()
         
-        # TODO: Implement merge logic
-        # 1. Copy any missing data from source products to target
-        # 2. Update any orders/references to point to target
-        # 3. Delete source products
-        # 4. Log merge in product_merge_history
+        # Smart Target Determination
+        if find_target and not target_id:
+            all_ids = source_ids
+            # Fetch alignment matches for these IDs
+            matches = supabase.client.table("product_matches")\
+                .select("opencart_product_id")\
+                .in_("opencart_product_id", all_ids)\
+                .execute()
+            
+            aligned_ids = set(m['opencart_product_id'] for m in matches.data)
+            
+            if aligned_ids:
+                # Priority 1: Pick an Aligned product (first one found)
+                target_id = list(aligned_ids)[0]
+                logger.info("merge_target_selected", method="alignment", target_id=target_id)
+            else:
+                # Priority 2: Pick the Latest product (Highest ID)
+                # Assumes higher ID = newer product
+                target_id = max(all_ids)
+                logger.info("merge_target_selected", method="latest_id", target_id=target_id)
+                
+            # Remove target from source list (if it was included)
+            if target_id in source_ids:
+                source_ids.remove(target_id)
+                
+        if not target_id:
+             raise HTTPException(status_code=400, detail="Could not determine target product ID")
+             
+        # Perform Merge (Delete Sources)
+        deleted_count = 0
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                # Delete from product, product_description, product_to_store, product_to_category
+                # Note: OpenCart usually cascades, but we'll be explicit for core tables
+                format_strings = ','.join(['%s'] * len(source_ids))
+                
+                cursor.execute(f"DELETE FROM oc_product WHERE product_id IN ({format_strings})", tuple(source_ids))
+                cursor.execute(f"DELETE FROM oc_product_description WHERE product_id IN ({format_strings})", tuple(source_ids))
+                cursor.execute(f"DELETE FROM oc_product_to_store WHERE product_id IN ({format_strings})", tuple(source_ids))
+                cursor.execute(f"DELETE FROM oc_product_to_category WHERE product_id IN ({format_strings})", tuple(source_ids))
+                
+            conn.commit()
+            deleted_count = len(source_ids)
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
         
-        logger.info("products_merged", target=target_id, sources=source_ids)
+        logger.info("products_merged", target=target_id, deleted=source_ids)
         
         return {
             "success": True,
-            "message": f"Merged {len(source_ids)} products into product {target_id}"
+            "message": f"Merged {deleted_count} products into product {target_id}",
+            "target_id": target_id,
+            "deleted_ids": source_ids
         }
         
     except Exception as e:
