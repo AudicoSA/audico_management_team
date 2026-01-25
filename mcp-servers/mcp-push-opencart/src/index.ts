@@ -474,7 +474,7 @@ export class OpenCartPushServer {
     logger.info(`   Fuzzy matching: ${candidates.length} candidates, core words: [${sbCoreWords.join(', ')}]`);
 
     if (candidates.length > 0 && candidates.length < 200) {
-      const topMatches: Array<{name: string; score: number; core: number; lev: number}> = [];
+      const topMatches: Array<{ name: string; score: number; core: number; lev: number }> = [];
 
       for (const ocp of candidates) {
         const ocName = ocp.name.toLowerCase();
@@ -492,7 +492,7 @@ export class OpenCartPushServer {
           const matched = ocWords.some((ocw: string) => {
             const ocwStem = ocw.replace(/(ing|er|ed)$/, '');
             return ocw.includes(word) || word.includes(ocw) ||
-                   ocwStem.includes(wordStem) || wordStem.includes(ocwStem);
+              ocwStem.includes(wordStem) || wordStem.includes(ocwStem);
           });
 
           if (matched) coreWordsMatched++;
@@ -526,7 +526,7 @@ export class OpenCartPushServer {
         }
 
         // Track top 5 for debugging
-        topMatches.push({name: ocp.name, score: hybridScore, core: coreScore, lev: levenshteinScore});
+        topMatches.push({ name: ocp.name, score: hybridScore, core: coreScore, lev: levenshteinScore });
       }
 
       // Show top 3 matches for debugging
@@ -538,7 +538,7 @@ export class OpenCartPushServer {
           const pct = Math.round(m.score * 100);
           const corePct = Math.round(m.core * 100);
           const levPct = Math.round(m.lev * 100);
-          logger.info(`     ${i+1}. ${pct}% (core:${corePct}%, lev:${levPct}%) - "${m.name}"`);
+          logger.info(`     ${i + 1}. ${pct}% (core:${corePct}%, lev:${levPct}%) - "${m.name}"`);
         });
       }
 
@@ -604,16 +604,16 @@ SKU: ${supabaseProduct.sku || 'Unknown'}
 
 **OpenCart Candidates:**
 ${candidates
-  .map(
-    (c, i) => `
+          .map(
+            (c, i) => `
 ${i + 1}. ID: ${c.product_id}
    Name: ${c.name}
    Model: ${c.model || 'N/A'}
    SKU: ${c.sku || 'N/A'}
    Manufacturer: ${c.manufacturer || 'N/A'}
 `
-  )
-  .join('')}
+          )
+          .join('')}
 
 Return ONLY valid JSON (no markdown):
 {
@@ -889,6 +889,21 @@ Return ONLY valid JSON (no markdown):
       );
       logger.info(`✅ Loaded ${pushedSkusSet.size} already-pushed SKUs into cache`);
 
+      // Load OpenCart cache for matching (CRITICAL for deduplication)
+      const ocProducts = await this.fetchOpenCartProducts();
+      ocProducts.forEach(p => {
+        this.openCartProductsCache.set(p.product_id, {
+          product_id: p.product_id,
+          name: p.product_description?.[0]?.name || p.model, // Handle nested description
+          model: p.model,
+          sku: p.sku,
+          price: p.price,
+          quantity: p.quantity,
+          manufacturer: p.manufacturer
+        });
+      });
+      logger.info(`✅ MATCHING ENGINE: Cached ${this.openCartProductsCache.size} OpenCart products for deduplication`);
+
       const liveFeedCategoryId = parseInt(process.env.OPENCART_LIVEFEED_CATEGORY_ID || '967');
 
       let created = 0;
@@ -918,8 +933,12 @@ Return ONLY valid JSON (no markdown):
             continue;
           }
 
-          // Not in tracking table - create it
+          // Not in tracking table - try to match logic
           let matchResult: ProductMatch = { matched: false, confidence: 0, match_type: 'none' as const };
+
+          if (!options?.skipMatching) {
+            matchResult = await this.matchProduct(product);
+          }
 
           if (options?.dryRun) {
             const action = matchResult.matched ? 'UPDATE' : 'CREATE';
