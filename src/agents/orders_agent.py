@@ -115,41 +115,74 @@ class OrdersLogisticsAgent:
             if custom_collection:
                 collection_address = custom_collection
             else:
-                # Attempt to determine Supplier from Product (Dropshipping)
+                # Strategy: 
+                # 1. Check if User assigned a Supplier in Dashboard (Primary Source of Truth)
+                # 2. If not, try to guess from OpenCart Product Manufacturer (Fallback)
+                
+                found_supplier_address = False
+                
+                # 1. Check Dashboard/DB Assigned Supplier
                 try:
-                    order_products = order.get('products', [])
-                    if order_products:
-                        # Use the first product to determine supplier (Simplified assumption for now)
-                        # TODO: Handle mixed-supplier orders (split shipments?)
-                        first_product = order_products[0]
-                        model = first_product.get('model')
+                    order_tracker = await self.supabase.get_order_tracker(order_id)
+                    if order_tracker and order_tracker.get("supplier"):
+                        db_supplier = order_tracker.get("supplier")
+                        logger.info("checking_db_supplier", order_id=order_id, supplier=db_supplier)
                         
-                        prod_details = await self.opencart.get_product_by_model(model)
-                        if prod_details and prod_details.get('manufacturer'):
-                            supplier_name = prod_details.get('manufacturer')
-                            logger.info("identifying_supplier", order_id=order_id, supplier=supplier_name)
-                            
-                            # Lookup Supplier Address
-                            supplier_info = await self.supabase.get_supplier_address(supplier_name)
-                            if supplier_info:
-                                logger.info("found_supplier_address", supplier=supplier_name)
-                                collection_address = {
-                                    "company": supplier_info.get("company", supplier_name),
-                                    "street_address": supplier_info.get("street_address"),
-                                    "local_area": supplier_info.get("local_area"),
-                                    "city": supplier_info.get("city"),
-                                    "code": supplier_info.get("code"),
-                                    "country_code": supplier_info.get("country_code", "ZA"),
-                                }
-                                collection_contact = {
-                                    "name": supplier_info.get("contact_name") or "Dispatch",
-                                    "mobile_number": supplier_info.get("contact_phone") or "",
-                                    "email": supplier_info.get("contact_email") or ""
-                                }
-                            else:
-                                logger.warning("supplier_address_not_found", supplier=supplier_name, note="Using Audico HQ")
+                        supplier_info = await self.supabase.get_supplier_address(db_supplier)
+                        if supplier_info:
+                             logger.info("found_supplier_address_via_db", supplier=db_supplier)
+                             collection_address = {
+                                "company": supplier_info.get("company", db_supplier),
+                                "street_address": supplier_info.get("street_address"),
+                                "local_area": supplier_info.get("local_area"),
+                                "city": supplier_info.get("city"),
+                                "code": supplier_info.get("code"),
+                                "country_code": supplier_info.get("country_code", "ZA"),
+                            }
+                             collection_contact = {
+                                "name": supplier_info.get("contact_name") or "Dispatch",
+                                "mobile_number": supplier_info.get("contact_phone") or "",
+                                "email": supplier_info.get("contact_email") or ""
+                            }
+                             found_supplier_address = True
                 except Exception as e:
-                    logger.error("failed_to_resolve_supplier_address", error=str(e))
+                    logger.warning("failed_to_check_db_supplier", error=str(e))
+
+                # 2. Fallback to OpenCart Manufacturer if not found above
+                if not found_supplier_address:
+                    try:
+                        order_products = order.get('products', [])
+                        if order_products:
+                            # Use the first product to determine supplier (Simplified assumption for now)
+                            first_product = order_products[0]
+                            model = first_product.get('model')
+                            
+                            prod_details = await self.opencart.get_product_by_model(model)
+                            if prod_details and prod_details.get('manufacturer'):
+                                supplier_name = prod_details.get('manufacturer')
+                                logger.info("identifying_supplier_from_manufacturer", order_id=order_id, supplier=supplier_name)
+                                
+                                # Lookup Supplier Address
+                                supplier_info = await self.supabase.get_supplier_address(supplier_name)
+                                if supplier_info:
+                                    logger.info("found_supplier_address_via_manufacturer", supplier=supplier_name)
+                                    collection_address = {
+                                        "company": supplier_info.get("company", supplier_name),
+                                        "street_address": supplier_info.get("street_address"),
+                                        "local_area": supplier_info.get("local_area"),
+                                        "city": supplier_info.get("city"),
+                                        "code": supplier_info.get("code"),
+                                        "country_code": supplier_info.get("country_code", "ZA"),
+                                    }
+                                    collection_contact = {
+                                        "name": supplier_info.get("contact_name") or "Dispatch",
+                                        "mobile_number": supplier_info.get("contact_phone") or "",
+                                        "email": supplier_info.get("contact_email") or ""
+                                    }
+                                else:
+                                    logger.warning("supplier_address_not_found", supplier=supplier_name, note="Using Audico HQ")
+                    except Exception as e:
+                        logger.error("failed_to_resolve_supplier_address", error=str(e))
 
             # 3. Prepare parcels
             # Simplified: 1 parcel, 2kg
