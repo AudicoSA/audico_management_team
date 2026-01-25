@@ -30,10 +30,13 @@ async def get_duplicate_skus():
         ORDER BY count DESC
         """
         
-        cursor = opencart.connection.cursor(dictionary=True)
-        cursor.execute(query)
-        duplicates = cursor.fetchall()
-        cursor.close()
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                duplicates = cursor.fetchall()
+        finally:
+            conn.close()
         
         logger.info("duplicate_skus_found", count=len(duplicates))
         
@@ -67,10 +70,13 @@ async def get_duplicate_names():
         LIMIT 100
         """
         
-        cursor = opencart.connection.cursor(dictionary=True)
-        cursor.execute(query)
-        duplicates = cursor.fetchall()
-        cursor.close()
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                duplicates = cursor.fetchall()
+        finally:
+            conn.close()
         
         logger.info("duplicate_names_found", count=len(duplicates))
         
@@ -92,10 +98,14 @@ async def get_orphaned_products():
         
         # Get all SKUs from OpenCart
         query = "SELECT product_id, sku, model FROM oc_product WHERE sku IS NOT NULL AND sku != ''"
-        cursor = opencart.connection.cursor(dictionary=True)
-        cursor.execute(query)
-        opencart_products = cursor.fetchall()
-        cursor.close()
+        
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                opencart_products = cursor.fetchall()
+        finally:
+            conn.close()
         
         # Get all SKUs from Supabase products table
         supabase_response = supabase.client.table("products")\
@@ -130,10 +140,14 @@ async def get_missing_products():
         
         # Get all SKUs from OpenCart
         query = "SELECT sku FROM oc_product WHERE sku IS NOT NULL AND sku != ''"
-        cursor = opencart.connection.cursor(dictionary=True)
-        cursor.execute(query)
-        opencart_skus = set(p['sku'] for p in cursor.fetchall())
-        cursor.close()
+        
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                opencart_skus = set(p['sku'] for p in cursor.fetchall())
+        finally:
+            conn.close()
         
         # Get all active products from Supabase
         supabase_response = supabase.client.table("products")\
@@ -141,7 +155,7 @@ async def get_missing_products():
             .eq("active", True)\
             .execute()
         
-        # Find missing products
+        # Find active products
         missing = [
             p for p in supabase_response.data 
             if p.get('sku') and p['sku'] not in opencart_skus
@@ -156,6 +170,118 @@ async def get_missing_products():
         
     except Exception as e:
         logger.error("get_missing_products_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/duplicates/potential")
+async def get_potential_duplicates():
+    """
+    Find 'Fuzzy' duplicates: OpenCart products that are NOT aligned, 
+    but match an Aligned product via Model/SKU rules.
+    """
+    import re
+    
+    def normalize_string(s):
+        if not s: return ""
+        return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+    try:
+        opencart = get_opencart_connector()
+        supabase = get_supabase_connector()
+        
+        # 1. Fetch Alignment Matches (Aligned IDs)
+        matches = supabase.client.table("product_matches").select("opencart_product_id").execute()
+        aligned_ids = set(m['opencart_product_id'] for m in matches.data if m.get('opencart_product_id'))
+        
+        # 2. Fetch All OpenCart Products
+        query = """
+            SELECT p.product_id, p.sku, p.model, pd.name 
+            FROM oc_product p 
+            JOIN oc_product_description pd ON p.product_id = pd.product_id 
+            WHERE pd.language_id = 1
+        """
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                oc_products = cursor.fetchall()
+        finally:
+            conn.close()
+        
+        # 3. Separate Aligned vs Unaligned
+        aligned = []
+        unaligned = []
+        
+        for p in oc_products:
+            p['norm_sku'] = normalize_string(p.get('sku'))
+            p['norm_model'] = normalize_string(p.get('model'))
+            
+            if p['product_id'] in aligned_ids:
+                aligned.append(p)
+            else:
+                unaligned.append(p)
+                
+        # 4. Build Indexes for Aligned
+        aligned_sku_map = {}
+        aligned_model_map = {}
+        
+        for p in aligned:
+            if p['norm_sku']: aligned_sku_map[p['norm_sku']] = p
+            if p['norm_model']: aligned_model_map[p['norm_model']] = p
+            
+        # 5. Scan for Duplicates
+        potential_duplicates = []
+        
+        for u in unaligned:
+            target = None
+            match_type = ""
+            
+            # Check 1: Model Match
+            u_model = u['norm_model']
+            if u_model:
+                if u_model in aligned_sku_map:
+                    target = aligned_sku_map[u_model]
+                    match_type = "Model matches Aligned SKU"
+                elif u_model in aligned_model_map:
+                    target = aligned_model_map[u_model]
+                    match_type = "Model matches Aligned Model"
+                    
+            # Check 2: SKU Match (if no model match)
+            if not target:
+                u_sku = u['norm_sku']
+                if u_sku:
+                    if u_sku in aligned_sku_map:
+                        target = aligned_sku_map[u_sku]
+                        match_type = "SKU matches Aligned SKU"
+                    elif u_sku in aligned_model_map:
+                        target = aligned_model_map[u_sku]
+                        match_type = "SKU matches Aligned Model"
+            
+            if target:
+                potential_duplicates.append({
+                    "unaligned": {
+                        "product_id": u['product_id'],
+                        "sku": u['sku'],
+                        "model": u['model'],
+                        "name": u['name']
+                    },
+                    "aligned": {
+                        "product_id": target['product_id'],
+                        "sku": target['sku'],
+                        "model": target['model'],
+                        "name": target['name']
+                    },
+                    "reason": match_type
+                })
+                
+        logger.info("potential_duplicates_found", count=len(potential_duplicates))
+        
+        return {
+            "total": len(potential_duplicates),
+            "duplicates": potential_duplicates
+        }
+
+    except Exception as e:
+        logger.error("get_potential_duplicates_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/merge")
