@@ -167,6 +167,8 @@ async def get_missing_products():
             .execute()
         
         # Find active products
+        # Find active products
+        missing = [
             {
                 "sku": p['sku'],
                 "product_name": p['product_name'],
