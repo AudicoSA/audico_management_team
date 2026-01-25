@@ -265,7 +265,7 @@ export default function OrdersPage() {
               </thead>
               <tbody className="divide-y divide-white/5 text-gray-300">
                 {orders
-                  .filter(order => (showCompleted || !order.flag_done) && !['Cancelled', 'Missing'].includes(order.supplier_status || ''))
+                  .filter(order => (showCompleted || (!order.flag_done && order.supplier_status !== 'Complete')) && !['Cancelled', 'Missing'].includes(order.supplier_status || ''))
                   .map((order, idx) => (
                     <tr key={order.order_no} className={`hover:bg-white/5 transition-colors ${idx % 2 === 0 ? 'bg-transparent' : 'bg-white/[0.02]'}`}>
                       <td className="p-2 font-mono text-gray-500">{order.order_no}</td>
