@@ -175,7 +175,7 @@ export default function OrdersPage() {
             if (e.key === 'Enter') saveEdit(order.order_no, field)
             if (e.key === 'Escape') setEditingCell(null)
           }}
-          className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full px-1 py-0.5 bg-[#2c2c2c] text-white text-xs border border-lime-400 rounded focus:outline-none focus:ring-1 focus:ring-lime-400"
           autoFocus
         />
       )
@@ -184,10 +184,10 @@ export default function OrdersPage() {
     return (
       <div
         onClick={() => startEdit(order.order_no, field, value)}
-        className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded min-h-[24px]"
+        className="cursor-pointer hover:bg-white/10 px-1 py-0.5 rounded min-h-[20px] transition-colors"
         title="Click to edit"
       >
-        {value || <span className="text-gray-300">-</span>}
+        {value || <span className="text-gray-600">-</span>}
       </div>
     )
   }
@@ -197,35 +197,35 @@ export default function OrdersPage() {
     return (
       <td
         onClick={() => toggleOwner(order.order_no, field, checked)}
-        className={`text-center py-1 cursor-pointer hover:opacity-75 transition-opacity border-r border-gray-200 ${checked ? color : 'bg-gray-50'
+        className={`text-center py-1 cursor-pointer hover:brightness-110 transition-all border-l border-white/5 ${checked ? color : 'bg-transparent text-gray-700'
           }`}
         title={`Toggle ${label}`}
       >
-        {checked && '✓'}
+        {checked ? '✓' : '·'}
       </td>
     )
   }
 
   return (
-    <div className="px-4 py-6">
-      <div className="mb-4 flex justify-between items-center">
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Orders Tracker</h1>
-          <p className="text-gray-600 text-sm mt-1">Excel-style order management</p>
+          <h1 className="text-2xl font-bold text-white">Orders Tracker</h1>
+          <p className="text-gray-400 text-xs mt-1">Compact view for high-density management</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowCompleted(!showCompleted)}
-            className={`px-4 py-2 rounded text-sm ${showCompleted
-              ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              : 'bg-gray-600 text-white hover:bg-gray-700'
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${showCompleted
+              ? 'bg-lime-400 text-black border-lime-400'
+              : 'bg-white/5 text-gray-400 border-white/10 hover:text-white'
               }`}
           >
             {showCompleted ? 'Hide Completed' : 'Show Completed'}
           </button>
           <button
             onClick={fetchOrders}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 text-xs font-medium transition-colors"
           >
             Refresh
           </button>
@@ -233,129 +233,128 @@ export default function OrdersPage() {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded p-3 mb-4 text-sm text-red-700">
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-xs text-red-400">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+        <div className="text-center py-20">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-lime-400"></div>
         </div>
       ) : (
-        <div className="bg-white shadow-sm rounded-lg overflow-hidden">
+        <div className="bg-[#1c1c1c] border border-white/5 rounded-xl overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm text-gray-900">
-              <thead className="bg-gray-800 text-white">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-black/40 text-gray-400 uppercase tracking-wider font-semibold">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">ORDER NO</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">ORDER NAME</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">SUPPLIER</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">NOTES</th>
-                  <th className="px-3 py-2 text-right font-medium border-r border-gray-700">COST</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">INVOICE NO</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">SUPPLIER INV</th>
-                  <th className="px-3 py-2 text-right font-medium border-r border-gray-700">SUPPLIER AMT</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">SUPPLIER STATUS</th>
-                  <th className="px-3 py-2 text-center font-medium border-r border-gray-700">PAID</th>
-                  <th className="px-3 py-2 text-right font-medium border-r border-gray-700">SHIPPING</th>
-                  <th className="px-3 py-2 text-right font-medium border-r border-gray-700">PROFIT</th>
-                  <th className="px-3 py-2 text-left font-medium border-r border-gray-700">UPDATES</th>
-                  <th className="px-3 py-2 text-center font-medium border-r border-gray-700">ACTIONS</th>
-                  <th className="px-3 py-2 text-center font-medium bg-blue-700 border-r border-gray-700">WADE</th>
-                  <th className="px-3 py-2 text-center font-medium bg-green-700 border-r border-gray-700">LUCKY</th>
-                  <th className="px-3 py-2 text-center font-medium bg-purple-700 border-r border-gray-700">KENNY</th>
-                  <th className="px-3 py-2 text-center font-medium bg-orange-700 border-r border-gray-700">ACCOUNTS</th>
-                  <th className="px-3 py-2 text-center font-medium bg-green-600 border-r border-gray-700">DONE</th>
-                  <th className="px-3 py-2 text-center font-medium bg-red-600">URGENT</th>
+                  <th className="p-2 border-b border-white/5 w-16">No.</th>
+                  <th className="p-2 border-b border-white/5 max-w-[120px]">Name</th>
+                  <th className="p-2 border-b border-white/5 w-24">Supplier</th>
+                  <th className="p-2 border-b border-white/5 max-w-[150px]">Notes</th>
+                  <th className="p-2 border-b border-white/5 text-right w-20">Cost</th>
+                  <th className="p-2 border-b border-white/5 w-20">Inv #</th>
+                  <th className="p-2 border-b border-white/5 w-20">Sup Inv</th>
+                  <th className="p-2 border-b border-white/5 text-right w-20">Sup Amt</th>
+                  <th className="p-2 border-b border-white/5 w-24">Status</th>
+                  <th className="p-2 border-b border-white/5 text-center w-10" title="Paid">Pd</th>
+                  <th className="p-2 border-b border-white/5 text-right w-20">Ship</th>
+                  <th className="p-2 border-b border-white/5 text-right w-20">Profit</th>
+                  <th className="p-2 border-b border-white/5 max-w-[150px]">Updates</th>
+                  <th className="p-2 border-b border-white/5 text-center w-16">Act</th>
+                  <th className="p-2 border-b border-white/5 text-center bg-blue-900/20 text-blue-400 w-8" title="Wade">W</th>
+                  <th className="p-2 border-b border-white/5 text-center bg-green-900/20 text-green-400 w-8" title="Lucky">L</th>
+                  <th className="p-2 border-b border-white/5 text-center bg-purple-900/20 text-purple-400 w-8" title="Kenny">K</th>
+                  <th className="p-2 border-b border-white/5 text-center bg-orange-900/20 text-orange-400 w-8" title="Accounts">A</th>
+                  <th className="p-2 border-b border-white/5 text-center bg-emerald-900/20 text-emerald-400 w-8" title="Done">✓</th>
+                  <th className="p-2 border-b border-white/5 text-center bg-red-900/20 text-red-400 w-8" title="Urgent">!</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-white/5 text-gray-300">
                 {orders
                   .filter(order => showCompleted || !order.flag_done)
                   .map((order, idx) => (
-                    <tr key={order.order_no} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                      <td className="px-3 py-1 font-medium text-gray-900 border-r border-gray-200">
-                        {order.order_no}
-                      </td>
-                      <td className="px-3 py-1 border-r border-gray-200 max-w-xs">
-                        <div className="truncate" title={order.order_name || ''}>
+                    <tr key={order.order_no} className={`hover:bg-white/5 transition-colors ${idx % 2 === 0 ? 'bg-transparent' : 'bg-white/[0.02]'}`}>
+                      <td className="p-2 font-mono text-gray-500">{order.order_no}</td>
+                      <td className="p-2 max-w-[120px]">
+                        <div className="truncate font-medium text-white" title={order.order_name || ''}>
                           {order.order_name || '-'}
                         </div>
                       </td>
-                      <td className="px-3 py-1 border-r border-gray-200">
+                      <td className="p-2 truncate max-w-[100px]" title={order.supplier || ''}>
                         <EditableCell order={order} field="supplier" value={order.supplier} />
                       </td>
-                      <td className="px-3 py-1 border-r border-gray-200 max-w-xs">
-                        <EditableCell order={order} field="notes" value={order.notes} />
+                      <td className="p-2 max-w-[150px]">
+                        <div className="truncate text-gray-500 italic" title={order.notes || ''}>
+                          <EditableCell order={order} field="notes" value={order.notes} />
+                        </div>
                       </td>
-                      <td className="px-3 py-1 text-right border-r border-gray-200 font-mono">
-                        {order.cost ? `R${order.cost.toFixed(2)}` : '-'}
+                      <td className="p-2 text-right font-mono text-gray-400">
+                        {order.cost ? `R${order.cost.toFixed(0)}` : '-'}
                       </td>
-                      <td className="px-3 py-1 border-r border-gray-200">
+                      <td className="p-2">
                         <EditableCell order={order} field="invoice_no" value={order.invoice_no} />
                       </td>
-                      <td className="px-3 py-1 border-r border-gray-200">
+                      <td className="p-2">
                         <EditableCell order={order} field="supplier_invoice_no" value={order.supplier_invoice_no} />
                       </td>
-                      <td className="px-3 py-1 text-right border-r border-gray-200">
-                        <EditableCell order={order} field="supplier_amount" value={order.supplier_amount ? `R${order.supplier_amount.toFixed(2)}` : null} type="number" />
+                      <td className="p-2 text-right font-mono">
+                        <EditableCell order={order} field="supplier_amount" value={order.supplier_amount ? `R${order.supplier_amount.toFixed(0)}` : null} type="number" />
                       </td>
-                      <td className="px-3 py-1 border-r border-gray-200">
-                        <EditableCell order={order} field="supplier_status" value={order.supplier_status} />
+                      <td className="p-2">
+                        <div className={`truncate px-1.5 py-0.5 rounded text-[10px] inline-block ${order.supplier_status === 'Shipped' ? 'bg-green-500/20 text-green-400' :
+                          order.supplier_status === 'Pending' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-gray-400'
+                          }`}>
+                          <EditableCell order={order} field="supplier_status" value={order.supplier_status} />
+                        </div>
                       </td>
-                      <td className="px-3 py-1 text-center border-r border-gray-200">
+                      <td className="p-2 text-center">
                         <div
                           onClick={() => toggleOwner(order.order_no, 'order_paid', order.order_paid ?? false)}
-                          className={`cursor-pointer hover:opacity-75 transition-opacity ${order.order_paid ? 'text-green-600' : 'text-gray-300'
+                          className={`cursor-pointer transition-transform hover:scale-110 ${order.order_paid ? 'text-green-400 font-bold' : 'text-gray-700'
                             }`}
                         >
                           {order.order_paid ? '✓' : '○'}
                         </div>
                       </td>
-                      <td className="px-3 py-1 text-right border-r border-gray-200">
-                        <EditableCell order={order} field="shipping" value={order.shipping ? `R${order.shipping.toFixed(2)}` : null} type="number" />
+                      <td className="p-2 text-right font-mono text-gray-500">
+                        <EditableCell order={order} field="shipping" value={order.shipping ? `R${order.shipping.toFixed(0)}` : null} type="number" />
                       </td>
-                      <td className={`px-3 py-1 text-right font-semibold border-r border-gray-200 ${order.profit && order.profit > 0 ? 'text-green-600' :
-                        order.profit && order.profit < 0 ? 'text-red-600' : 'text-gray-500'
+                      <td className={`p-2 text-right font-mono font-bold ${order.profit && order.profit > 0 ? 'text-lime-400' :
+                        order.profit && order.profit < 0 ? 'text-red-400' : 'text-gray-600'
                         }`}>
-                        {order.profit ? `R${order.profit.toFixed(2)}` : '-'}
+                        {order.profit ? `R${order.profit.toFixed(0)}` : '-'}
                       </td>
-                      <td className="px-3 py-1 border-r border-gray-200 max-w-xs">
-                        <EditableCell order={order} field="updates" value={order.updates} />
+                      <td className="p-2 max-w-[150px]">
+                        <div className="truncate text-gray-500" title={order.updates || ''}>
+                          <EditableCell order={order} field="updates" value={order.updates} />
+                        </div>
                       </td>
-                      <td className="px-3 py-1 text-center border-r border-gray-200">
+                      <td className="p-2 text-center">
                         {order.supplier_status !== 'Shipped' && (
                           <button
                             onClick={() => openBookingModal(order.order_no)}
-                            className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs"
+                            className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 rounded p-1 transition-colors"
                             title="Book Shipment (Dry Run)"
                           >
-                            Ship
-                          </button>
-                        )}
-                        {order.supplier_status === 'Shipped' && (
-                          <button
-                            disabled
-                            className="px-2 py-0.5 bg-gray-100 text-gray-400 rounded cursor-not-allowed text-xs font-medium"
-                          >
-                            Shipped
+                            ✈
                           </button>
                         )}
                       </td>
-                      <OwnerCheckbox order={order} field="owner_wade" label="Wade" color="bg-blue-200" />
-                      <OwnerCheckbox order={order} field="owner_lucky" label="Lucky" color="bg-green-200" />
-                      <OwnerCheckbox order={order} field="owner_kenny" label="Kenny" color="bg-purple-200" />
-                      <OwnerCheckbox order={order} field="owner_accounts" label="Accounts" color="bg-orange-200" />
-                      <OwnerCheckbox order={order} field="flag_done" label="Done" color="bg-green-300" />
-                      <OwnerCheckbox order={order} field="flag_urgent" label="Urgent" color="bg-red-300" />
+                      <OwnerCheckbox order={order} field="owner_wade" color="bg-blue-500/50 text-white" />
+                      <OwnerCheckbox order={order} field="owner_lucky" color="bg-green-500/50 text-white" />
+                      <OwnerCheckbox order={order} field="owner_kenny" color="bg-purple-500/50 text-white" />
+                      <OwnerCheckbox order={order} field="owner_accounts" color="bg-orange-500/50 text-white" />
+                      <OwnerCheckbox order={order} field="flag_done" color="bg-emerald-500 text-black border-emerald-500" />
+                      <OwnerCheckbox order={order} field="flag_urgent" color="bg-red-500 text-white border-red-500" />
                     </tr>
                   ))}
               </tbody>
             </table>
           </div>
-          <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            <p>Showing {orders.filter(o => showCompleted || !o.flag_done).length} of {orders.length} orders • Click any cell to edit • Click checkboxes to toggle</p>
+          <div className="px-4 py-2 border-t border-white/5 text-xs text-gray-500 bg-black/20 flex justify-between">
+            <p>Showing {orders.filter(o => showCompleted || !o.flag_done).length} orders</p>
+            <p>Compact Mode Active</p>
           </div>
         </div>
       )
