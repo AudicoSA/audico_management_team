@@ -19,8 +19,13 @@ interface OrphanedProduct {
 
 interface MissingProduct {
     sku: string
+    product_name?: string
     supplier: string
 }
+
+// ... existing code ...
+
+
 
 // ... (existing code) ...
 
@@ -486,7 +491,13 @@ export default function DuplicatesPage() {
                                         {missing.slice(0, 100).map((product, idx) => (
                                             <div key={idx} className="border border-gray-200 rounded-lg p-3 mb-2 hover:bg-gray-50 bg-white">
                                                 <div className="text-sm text-gray-900">
-                                                    <strong className="text-gray-700">SKU:</strong> <span className="font-mono bg-gray-100 px-1 rounded">{product.sku}</span> <span className="text-gray-400">|</span> <strong className="text-gray-700">Supplier:</strong> {product.supplier}
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <span className="font-semibold text-gray-800 line-clamp-1 mr-2">{product.product_name || 'Unknown Name'}</span>
+                                                        <span className="text-xs text-gray-500 whitespace-nowrap">{product.supplier}</span>
+                                                    </div>
+                                                    <div className="text-xs text-gray-600 font-mono">
+                                                        SKU: <span className="bg-gray-100 px-1 rounded">{product.sku}</span>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))}

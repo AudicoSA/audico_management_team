@@ -101,7 +101,7 @@ async def get_orphaned_products():
             SELECT p.product_id, p.sku, p.model, pd.name 
             FROM oc_product p 
             LEFT JOIN oc_product_description pd ON p.product_id = pd.product_id 
-            WHERE p.sku IS NOT NULL AND p.sku != '' AND pd.language_id = 1
+            WHERE p.sku IS NOT NULL AND p.sku != '' AND pd.language_id = 1 AND p.quantity > 0
         """
         
         conn = opencart._get_connection()
@@ -167,8 +167,13 @@ async def get_missing_products():
             .execute()
         
         # Find active products
-        missing = [
-            p for p in supabase_response.data 
+            {
+                "sku": p['sku'],
+                "product_name": p['product_name'],
+                "supplier_id": p.get('supplier_id'),
+                "cost_price": p.get('cost_price')
+            }
+            for p in supabase_response.data 
             if p.get('sku') and p['sku'] not in opencart_skus
         ]
         
