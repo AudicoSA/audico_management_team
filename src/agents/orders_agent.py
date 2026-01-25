@@ -336,13 +336,15 @@ class OrdersLogisticsAgent:
         logger.info("sync_orders_started")
         try:
             # Valid OpenCart status IDs to sync
-            # 1 = Pending, 2 = Processing, 15 = Processed (Awaiting Shipment)
-            # 18 = Awaiting Payment, 23 = Paid, 29 = Supplier Ordered
-            VALID_STATUSES = [1, 2, 15, 18, 23, 29]
+            # 1 = Pending, 2 = Processing, 3 = Shipped, 5 = Complete
+            # 15 = Processed (Awaiting Shipment), 18 = Awaiting Payment, 23 = Paid, 29 = Supplier Ordered
+            VALID_STATUSES = [1, 2, 3, 5, 15, 18, 23, 29]
             
             STATUS_MAP = {
                 1: "Pending",
                 2: "Processing",
+                3: "Shipped",
+                5: "Complete",
                 15: "Processed",
                 17: "Cancelled", 
                 18: "Awaiting Payment",
