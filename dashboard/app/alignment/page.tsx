@@ -39,6 +39,7 @@ export default function AlignmentPage() {
     const [candidates, setCandidates] = useState<Candidate[]>([])
     const [loading, setLoading] = useState(false)
     const [analyzing, setAnalyzing] = useState(false)
+    const [aligning, setAligning] = useState(false)
 
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -57,6 +58,34 @@ export default function AlignmentPage() {
             console.error('Failed to fetch unmatched', error)
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleAutoAlign = async () => {
+        if (!confirm(`Are you sure you want to run Auto-Alignment?\n\nThis will scan unmatched products and AUTOMATICALLY LINK any that have a 100% Exact Match.\n\nThis cannot be undone easily.`)) {
+            return;
+        }
+
+        setAligning(true);
+        try {
+            const res = await fetch(`${API_URL}/api/alignment/auto-link`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confidence_threshold: 100 })
+            });
+            const data = await res.json();
+
+            if (data.status === 'success') {
+                alert(`Auto-Alignment Complete!\n\n${data.message}`);
+                fetchUnmatched(); // Refresh list
+            } else {
+                alert('Auto-Alignment reported an issue: ' + (data.detail || JSON.stringify(data)));
+            }
+        } catch (error) {
+            console.error(error);
+            alert('Failed to run Auto-Alignment');
+        } finally {
+            setAligning(false);
         }
     }
 
@@ -177,7 +206,16 @@ export default function AlignmentPage() {
                     <div className="lg:col-span-4 glass rounded-2xl p-4 overflow-y-auto border border-white/10">
                         <h2 className="text-lg font-semibold mb-4 flex items-center justify-between">
                             <span>Unmatched Queue</span>
-                            <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded-full">{unmatched.length}</span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={handleAutoAlign}
+                                    disabled={aligning || unmatched.length === 0}
+                                    className="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {aligning ? 'Aligning...' : '⚡ Auto Align'}
+                                </button>
+                                <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded-full">{unmatched.length}</span>
+                            </div>
                         </h2>
 
                         {loading ? (

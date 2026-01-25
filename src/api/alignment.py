@@ -166,6 +166,88 @@ async def ignore_product(request: IgnoreRequest):
         logger.error("ignore_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+class AutoLinkRequest(BaseModel):
+    confidence_threshold: int = 100
+    batch_size: int = 50
+
+@router.post("/auto-link")
+async def auto_link_products(request: AutoLinkRequest):
+    """
+    Automatically link products that match with high confidence (default 100%).
+    Scans unmatched products and runs alignment engine.
+    """
+    sb = get_supabase_connector()
+    engine = AlignmentEngine()
+    
+    try:
+        # 1. Fetch unmatched products (reuse logic or fetch larger batch)
+        # We'll fetch a batch of recent unmatched products
+        # Logic similar to get_unmatched_products but we need just ID and details
+        
+        # Determine unmatched IDs first to be efficient
+        # Fetch 200 recent products
+        products_response = sb.client.table("products")\
+            .select("id, sku, product_name, selling_price")\
+            .gt("selling_price", 0)\
+            .order("created_at", desc=True)\
+            .limit(request.batch_size * 4)\
+            .execute() # Fetch 4x batch size to find enough unmatched
+            
+        if not products_response.data:
+            return {"status": "success", "aligned": 0, "processed": 0, "message": "No products found"}
+
+        # Filter out already matched
+        product_ids = [p['id'] for p in products_response.data]
+        matches_response = sb.client.table("product_matches")\
+            .select("internal_product_id")\
+            .in_("internal_product_id", product_ids)\
+            .execute()
+            
+        matched_ids = set(m['internal_product_id'] for m in matches_response.data)
+        unmatched = [p for p in products_response.data if p['id'] not in matched_ids] # Limit to batch size not needed if we process all found
+        
+        aligned_count = 0
+        processed_count = 0
+        
+        for p in unmatched[:request.batch_size]: # Respect batch limit
+            processed_count += 1
+            
+            # Run Alignment
+            supplier_data = {
+                "sku": p.get("sku"),
+                "name": p.get("product_name"),
+                "price": p.get("selling_price")
+            }
+            
+            candidates = await engine.find_matches(supplier_data)
+            
+            # Check for high confidence match
+            if candidates and candidates[0]['confidence'] >= request.confidence_threshold:
+                best_match = candidates[0]
+                
+                # Link it
+                link_data = {
+                    "internal_product_id": p['id'],
+                    "opencart_product_id": best_match['product']['product_id'],
+                    "match_type": best_match['match_type'], # e.g. "exact_sku"
+                    "score": best_match['confidence']
+                }
+                
+                sb.client.table("product_matches").insert(link_data).execute()
+                aligned_count += 1
+                logger.info("auto_aligned", product=p['product_name'], match=best_match['product']['name'])
+        
+        return {
+            "status": "success",
+            "aligned": aligned_count,
+            "processed": processed_count,
+            "message": f"Successfully aligned {aligned_count} products out of {processed_count} scanned."
+        }
+
+    except Exception as e:
+        logger.error("auto_link_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
 class CreateRequest(BaseModel):
     internal_product_id: str
     category_ids: Optional[List[int]] = None  # Optional category IDs for the new product
