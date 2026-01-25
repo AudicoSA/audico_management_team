@@ -352,7 +352,12 @@ export default function OrdersPage() {
         onConfirm={handleConfirmBooking}
         orderId={selectedOrderForBooking || ''}
         loading={bookingLoading}
-        initialSupplierInvoice={orders.find(o => o.order_no === selectedOrderForBooking)?.invoice_no || undefined}
+        initialSupplierInvoice={
+          orders.find(o => o.order_no === selectedOrderForBooking)?.supplier_invoice_no ||
+          orders.find(o => o.order_no === selectedOrderForBooking)?.invoice_no ||
+          undefined
+        }
+        initialSupplier={orders.find(o => o.order_no === selectedOrderForBooking)?.supplier || undefined}
       />
     </div >
   )

@@ -8,9 +8,10 @@ interface BookShipmentModalProps {
     orderId: string
     loading: boolean
     initialSupplierInvoice?: string
+    initialSupplier?: string
 }
 
-export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId, loading, initialSupplierInvoice }: BookShipmentModalProps) {
+export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId, loading, initialSupplierInvoice, initialSupplier }: BookShipmentModalProps) {
     const [suppliers, setSuppliers] = useState<Supplier[]>([])
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>('custom')
     const [saveAsNew, setSaveAsNew] = useState(false)
@@ -20,21 +21,23 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
 
     const [address, setAddress] = useState({
         company: 'Audico Online',
-        street_address: '123 Example Street',
-        local_area: 'Sandton',
-        city: 'Johannesburg',
-        code: '2000',
+        street_address: 'Audiovisual House, 58b Maple Road',
+        local_area: 'Pomona',
+        city: 'Kempton Park',
+        code: '1619',
         country_code: 'ZA'
     })
 
     useEffect(() => {
         if (isOpen) {
-            fetchSuppliers()
             setSupplierInvoice(initialSupplierInvoice || '')
+            // Trigger supplier fetch and pre-select
+            // We need to wait for fetch to complete before setting selection, so we combine logic
+            loadAndSelectSupplier(initialSupplier)
         }
-    }, [isOpen, initialSupplierInvoice])
+    }, [isOpen, initialSupplierInvoice, initialSupplier])
 
-    const fetchSuppliers = async () => {
+    const loadAndSelectSupplier = async (preselectName?: string) => {
         console.log('🔍 Fetching suppliers...')
         const { data, error } = await supabase
             .from('supplier_addresses')
@@ -43,11 +46,38 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
 
         if (error) {
             console.error('❌ Error fetching suppliers:', error)
+            return
         }
 
         if (data) {
             console.log('✅ Suppliers loaded:', data.length)
             setSuppliers(data)
+
+            if (preselectName) {
+                // Try to find match
+                // 1. Exact Name
+                let match = data.find(s => s.name.toLowerCase() === preselectName.toLowerCase())
+
+                // 2. Company Name
+                if (!match) match = data.find(s => s.company?.toLowerCase() === preselectName.toLowerCase())
+
+                // 3. Fuzzy Contains
+                if (!match) match = data.find(s => s.name.toLowerCase().includes(preselectName.toLowerCase()))
+
+                if (match) {
+                    console.log('🎯 Pre-selecting matched supplier:', match.name)
+                    setSelectedSupplierId(match.id)
+                    setAddress({
+                        company: match.company,
+                        street_address: match.street_address,
+                        local_area: match.local_area,
+                        city: match.city,
+                        code: match.code,
+                        country_code: match.country_code
+                    })
+                    setSaveAsNew(false)
+                }
+            }
         }
     }
 
