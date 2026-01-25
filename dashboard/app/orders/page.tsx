@@ -249,9 +249,8 @@ export default function OrdersPage() {
               <thead className="bg-black/40 text-gray-400 uppercase tracking-wider font-semibold">
                 <tr>
                   <th className="p-2 border-b border-white/5 w-16">No.</th>
-                  <th className="p-2 border-b border-white/5 max-w-[120px]">Name</th>
+                  <th className="p-2 border-b border-white/5 max-w-[120px]">Customer</th>
                   <th className="p-2 border-b border-white/5 w-24">Supplier</th>
-                  <th className="p-2 border-b border-white/5 max-w-[150px]">Notes</th>
                   <th className="p-2 border-b border-white/5 text-right w-20">Cost</th>
                   <th className="p-2 border-b border-white/5 w-20">Inv #</th>
                   <th className="p-2 border-b border-white/5 w-20">Sup Inv</th>
@@ -260,14 +259,7 @@ export default function OrdersPage() {
                   <th className="p-2 border-b border-white/5 text-center w-10" title="Paid">Pd</th>
                   <th className="p-2 border-b border-white/5 text-right w-20">Ship</th>
                   <th className="p-2 border-b border-white/5 text-right w-20">Profit</th>
-                  <th className="p-2 border-b border-white/5 max-w-[150px]">Updates</th>
                   <th className="p-2 border-b border-white/5 text-center w-16">Act</th>
-                  <th className="p-2 border-b border-white/5 text-center bg-blue-900/20 text-blue-400 w-8" title="Wade">W</th>
-                  <th className="p-2 border-b border-white/5 text-center bg-green-900/20 text-green-400 w-8" title="Lucky">L</th>
-                  <th className="p-2 border-b border-white/5 text-center bg-purple-900/20 text-purple-400 w-8" title="Kenny">K</th>
-                  <th className="p-2 border-b border-white/5 text-center bg-orange-900/20 text-orange-400 w-8" title="Accounts">A</th>
-                  <th className="p-2 border-b border-white/5 text-center bg-emerald-900/20 text-emerald-400 w-8" title="Done">✓</th>
-                  <th className="p-2 border-b border-white/5 text-center bg-red-900/20 text-red-400 w-8" title="Urgent">!</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-gray-300">
@@ -278,16 +270,11 @@ export default function OrdersPage() {
                       <td className="p-2 font-mono text-gray-500">{order.order_no}</td>
                       <td className="p-2 max-w-[120px]">
                         <div className="truncate font-medium text-white" title={order.order_name || ''}>
-                          {order.order_name || '-'}
+                          {order.order_name?.split(' ')[0] || '-'}
                         </div>
                       </td>
                       <td className="p-2 truncate max-w-[100px]" title={order.supplier || ''}>
                         <EditableCell order={order} field="supplier" value={order.supplier} />
-                      </td>
-                      <td className="p-2 max-w-[150px]">
-                        <div className="truncate text-gray-500 italic" title={order.notes || ''}>
-                          <EditableCell order={order} field="notes" value={order.notes} />
-                        </div>
                       </td>
                       <td className="p-2 text-right font-mono text-gray-400">
                         {order.cost ? `R${order.cost.toFixed(0)}` : '-'}
@@ -303,7 +290,7 @@ export default function OrdersPage() {
                       </td>
                       <td className="p-2">
                         <div className={`truncate px-1.5 py-0.5 rounded text-[10px] inline-block ${order.supplier_status === 'Shipped' ? 'bg-green-500/20 text-green-400' :
-                          order.supplier_status === 'Pending' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-gray-400'
+                            order.supplier_status === 'Pending' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-gray-400'
                           }`}>
                           <EditableCell order={order} field="supplier_status" value={order.supplier_status} />
                         </div>
@@ -325,11 +312,6 @@ export default function OrdersPage() {
                         }`}>
                         {order.profit ? `R${order.profit.toFixed(0)}` : '-'}
                       </td>
-                      <td className="p-2 max-w-[150px]">
-                        <div className="truncate text-gray-500" title={order.updates || ''}>
-                          <EditableCell order={order} field="updates" value={order.updates} />
-                        </div>
-                      </td>
                       <td className="p-2 text-center">
                         {order.supplier_status !== 'Shipped' && (
                           <button
@@ -341,12 +323,6 @@ export default function OrdersPage() {
                           </button>
                         )}
                       </td>
-                      <OwnerCheckbox order={order} field="owner_wade" color="bg-blue-500/50 text-white" />
-                      <OwnerCheckbox order={order} field="owner_lucky" color="bg-green-500/50 text-white" />
-                      <OwnerCheckbox order={order} field="owner_kenny" color="bg-purple-500/50 text-white" />
-                      <OwnerCheckbox order={order} field="owner_accounts" color="bg-orange-500/50 text-white" />
-                      <OwnerCheckbox order={order} field="flag_done" color="bg-emerald-500 text-black border-emerald-500" />
-                      <OwnerCheckbox order={order} field="flag_urgent" color="bg-red-500 text-white border-red-500" />
                     </tr>
                   ))}
               </tbody>
