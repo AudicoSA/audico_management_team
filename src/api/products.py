@@ -346,6 +346,23 @@ async def merge_products(payload: Dict[str, Any]):
                 cursor.execute(f"DELETE FROM oc_product_to_store WHERE product_id IN ({format_strings})", tuple(source_ids))
                 cursor.execute(f"DELETE FROM oc_product_to_category WHERE product_id IN ({format_strings})", tuple(source_ids))
                 
+                # Also delete zombie SEO URLs (OpenCart 3+ 'product_id=X')
+                seo_queries = [f"product_id={sid}" for sid in source_ids]
+                seo_format_strings = ','.join(['%s'] * len(seo_queries))
+                
+                # Try deleting from oc_seo_url (OC 3+)
+                try:
+                    cursor.execute(f"DELETE FROM oc_seo_url WHERE query IN ({seo_format_strings})", tuple(seo_queries))
+                    # Also try keyword match just in case? No, 'query' is the linking column.
+                except Exception:
+                    pass # Table might not exist
+                    
+                # Try deleting from oc_url_alias (OC 1.5 - 2.x) - just in case legacy table exists
+                try:
+                     cursor.execute(f"DELETE FROM oc_url_alias WHERE query IN ({seo_format_strings})", tuple(seo_queries))
+                except Exception:
+                     pass
+                
             conn.commit()
             deleted_count = len(source_ids)
         except Exception as e:
