@@ -21,6 +21,23 @@ interface MissingProduct {
     supplier: string
 }
 
+// Define type for potential duplicates
+interface PotentialDuplicate {
+    unaligned: {
+        product_id: number
+        sku: string
+        model: string
+        name: string
+    }
+    aligned: {
+        product_id: number
+        sku: string
+        model: string
+        name: string
+    }
+    reason: string
+}
+
 export default function DuplicatesPage() {
     const [duplicateSkus, setDuplicateSkus] = useState<Duplicate[]>([])
     const [duplicateNames, setDuplicateNames] = useState<Duplicate[]>([])
@@ -28,6 +45,7 @@ export default function DuplicatesPage() {
     const [orphaned, setOrphaned] = useState<OrphanedProduct[]>([])
     const [missing, setMissing] = useState<MissingProduct[]>([])
     const [loading, setLoading] = useState(true)
+    const [statusMessage, setStatusMessage] = useState("Processing...")
     const [activeTab, setActiveTab] = useState<'skus' | 'names' | 'potential' | 'orphaned' | 'missing'>('skus')
 
     useEffect(() => {
@@ -35,6 +53,7 @@ export default function DuplicatesPage() {
     }, [])
 
     const fetchData = async () => {
+        setStatusMessage("Fetching data...")
         try {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -66,6 +85,22 @@ export default function DuplicatesPage() {
         }
     }
 
+    const callMergeApi = async (sourceIds: number[], targetId?: number, determineTarget: boolean = false) => {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+        const res = await fetch(`${apiUrl}/api/products/merge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_product_ids: sourceIds,
+                target_product_id: targetId,
+                determine_target: determineTarget
+            })
+        });
+
+        return await res.json();
+    }
+
     const executeMerge = async (sourceIds: number[], targetId?: number, determineTarget: boolean = false) => {
         if (!confirm(`Are you sure you want to merge these products? IDs: ${sourceIds.join(', ')}\n${targetId ? `Target: ${targetId}` : 'Target: Auto-detect'}`)) {
             return;
@@ -73,21 +108,11 @@ export default function DuplicatesPage() {
 
         try {
             setLoading(true);
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            setStatusMessage("Merging...");
 
-            const res = await fetch(`${apiUrl}/api/products/merge`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    source_product_ids: sourceIds,
-                    target_product_id: targetId,
-                    determine_target: determineTarget
-                })
-            });
+            const data = await callMergeApi(sourceIds, targetId, determineTarget);
 
-            const data = await res.json();
-
-            if (res.ok && data.success) {
+            if (data.success) {
                 alert(`Success! Merged into Product ID ${data.target_id}.\nDeleted IDs: ${data.deleted_ids.join(', ')}`);
                 fetchData();
             } else {
@@ -117,6 +142,69 @@ export default function DuplicatesPage() {
         await executeMerge(ids, undefined, true);
     }
 
+    const handleMergeAll = async () => {
+        let itemsToProcess: Array<{ sourceIds: number[], targetId?: number, determineTarget: boolean }> = [];
+
+        // 1. Identify items based on active tab
+        if (activeTab === 'skus') {
+            duplicateSkus.forEach(dup => {
+                const ids = dup.product_ids.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+                if (ids.length >= 2) {
+                    itemsToProcess.push({ sourceIds: ids, determineTarget: true });
+                }
+            });
+        } else if (activeTab === 'potential') {
+            potentialDuplicates.forEach(dup => {
+                itemsToProcess.push({
+                    sourceIds: [dup.unaligned.product_id],
+                    targetId: dup.aligned.product_id,
+                    determineTarget: false
+                });
+            });
+        } else {
+            alert("Merge All is only available for Duplicate SKUs and Potential Duplicates tabs.");
+            return;
+        }
+
+        if (itemsToProcess.length === 0) {
+            alert("No items to merge!");
+            return;
+        }
+
+        // 2. Confirm
+        if (!confirm(`⚠️  WARNING: BATCH MERGE\n\nThis will automatically merge ${itemsToProcess.length} groups of products.\n\nAre you sure you want to proceed?`)) {
+            return;
+        }
+
+        // 3. Process sequentially
+        setLoading(true);
+        let successCount = 0;
+        let failCount = 0;
+
+        for (let i = 0; i < itemsToProcess.length; i++) {
+            const item = itemsToProcess[i];
+            setStatusMessage(`Merging group ${i + 1} of ${itemsToProcess.length}...`);
+
+            try {
+                const res = await callMergeApi(item.sourceIds, item.targetId, item.determineTarget);
+                if (res.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                    console.error(`Failed to merge group ${i}:`, res);
+                }
+            } catch (error) {
+                failCount++;
+                console.error(`Error merging group ${i}:`, error);
+            }
+        }
+
+        // 4. Finish
+        alert(`Batch Merge Complete!\n\nSuccessful: ${successCount}\nFailed: ${failCount}`);
+        setStatusMessage("Refreshing data...");
+        fetchData();
+    }
+
     const handleViewDetails = (duplicate: Duplicate) => {
         alert(`Duplicate Details:\n\nSKU: ${duplicate.sku}\nProduct IDs: ${duplicate.product_ids}\nNames: ${duplicate.names || 'N/A'}`);
     }
@@ -124,34 +212,19 @@ export default function DuplicatesPage() {
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
-                <div className="text-gray-500">Processing...</div>
+                <div className="text-gray-500">{statusMessage}</div>
             </div>
         )
-    }
-
-    // Define type for potential duplicates
-    interface PotentialDuplicate {
-        unaligned: {
-            product_id: number
-            sku: string
-            model: string
-            name: string
-        }
-        aligned: {
-            product_id: number
-            sku: string
-            model: string
-            name: string
-        }
-        reason: string
     }
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
             <div className="max-w-7xl mx-auto">
-                <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900">Product Quality Dashboard</h1>
-                    <p className="text-gray-600 mt-2">Identify and fix duplicate products, orphaned items, and data quality issues</p>
+                <div className="mb-8 flex justify-between items-start">
+                    <div>
+                        <h1 className="text-3xl font-bold text-gray-900">Product Quality Dashboard</h1>
+                        <p className="text-gray-600 mt-2">Identify and fix duplicate products, orphaned items, and data quality issues</p>
+                    </div>
                 </div>
 
                 {/* Summary Cards */}
@@ -189,7 +262,7 @@ export default function DuplicatesPage() {
 
                 {/* Tabs */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                    <div className="border-b border-gray-200">
+                    <div className="border-b border-gray-200 flex justify-between items-center pr-6">
                         <nav className="flex space-x-8 px-6" aria-label="Tabs">
                             {[
                                 { id: 'skus', label: 'Duplicate SKUs', count: duplicateSkus.length },
@@ -210,6 +283,16 @@ export default function DuplicatesPage() {
                                 </button>
                             ))}
                         </nav>
+
+                        {/* Batch Action Button */}
+                        {(activeTab === 'skus' && duplicateSkus.length > 0) || (activeTab === 'potential' && potentialDuplicates.length > 0) ? (
+                            <button
+                                onClick={handleMergeAll}
+                                className="bg-red-600 text-white px-4 py-2 rounded text-sm font-semibold hover:bg-red-700 transition shadow-sm flex items-center"
+                            >
+                                <span className="mr-2">⚡</span> Merge All ({activeTab === 'skus' ? duplicateSkus.length : potentialDuplicates.length})
+                            </button>
+                        ) : null}
                     </div>
 
                     <div className="p-6">
