@@ -340,6 +340,16 @@ class OrdersLogisticsAgent:
             # 18 = Awaiting Payment, 23 = Paid, 29 = Supplier Ordered
             VALID_STATUSES = [1, 2, 15, 18, 23, 29]
             
+            STATUS_MAP = {
+                1: "Pending",
+                2: "Processing",
+                15: "Processed",
+                17: "Cancelled", 
+                18: "Awaiting Payment",
+                23: "Paid",
+                29: "Supplier Ordered"
+            }
+            
             # 1. Fetch recent orders
             orders = await self.opencart.get_recent_orders(limit=50)
             
@@ -350,25 +360,38 @@ class OrdersLogisticsAgent:
             for order in orders:
                 try:
                     order_id = str(order["order_id"])
-                    status_id = order.get("order_status_id")
+                    status_id = int(order.get("order_status_id", 0))
                     
                     # Skip orders with invalid statuses
                     # Status 0 = Unconfirmed, 7 = Canceled, etc.
+                    # Note: We specifically filter out Cancelled/Missing here so they don't clutter DB
                     if status_id not in VALID_STATUSES:
                         logger.debug("sync_order_skipped", order_id=order_id, status_id=status_id, reason="invalid_status")
                         skipped_count += 1
                         continue
                     
+                    status_name = STATUS_MAP.get(status_id, "Processing")
+                    
                     # 2. Upsert into Supabase
                     # Calculate total cost (revenue)
                     total = float(order.get("total", 0))
                     
+                    # Determine Paid status
+                    # Awaiting Payment (18) or Pending (1) usually means Unpaid
+                    is_paid = status_id not in [1, 18]
+                    
+                    full_name = f"{order.get('firstname', '')} {order.get('lastname', '')}".strip()
+                    if not full_name:
+                        full_name = f"Order #{order_id}"
+
                     await self.supabase.upsert_order_tracker(
                         order_no=order_id,
-                        order_name=f"Order #{order_id}", # Placeholder name
-                        source="opencart",  # Changed from opencart_sync
+                        order_name=full_name, 
+                        source="opencart",
                         cost=total, # Revenue
-                        notes=f"Customer: {order.get('firstname')} {order.get('lastname')} | Email: {order.get('email')} | Address: {order.get('shipping_address_1', '')}, {order.get('shipping_city', '')}, {order.get('shipping_postcode', '')}",
+                        supplier_status=status_name, # Sync OpenCart status to Supplier Status field
+                        order_paid=is_paid,
+                        notes=f"Email: {order.get('email')} | Phone: {order.get('telephone')}",
                         last_modified_by="system_sync"
                     )
                     synced_count += 1

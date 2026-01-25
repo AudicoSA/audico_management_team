@@ -264,7 +264,7 @@ export default function OrdersPage() {
               </thead>
               <tbody className="divide-y divide-white/5 text-gray-300">
                 {orders
-                  .filter(order => showCompleted || !order.flag_done)
+                  .filter(order => (showCompleted || !order.flag_done) && !['Cancelled', 'Missing'].includes(order.supplier_status || ''))
                   .map((order, idx) => (
                     <tr key={order.order_no} className={`hover:bg-white/5 transition-colors ${idx % 2 === 0 ? 'bg-transparent' : 'bg-white/[0.02]'}`}>
                       <td className="p-2 font-mono text-gray-500">{order.order_no}</td>
@@ -290,7 +290,7 @@ export default function OrdersPage() {
                       </td>
                       <td className="p-2">
                         <div className={`truncate px-1.5 py-0.5 rounded text-[10px] inline-block ${order.supplier_status === 'Shipped' ? 'bg-green-500/20 text-green-400' :
-                            order.supplier_status === 'Pending' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-gray-400'
+                          order.supplier_status === 'Pending' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-gray-400'
                           }`}>
                           <EditableCell order={order} field="supplier_status" value={order.supplier_status} />
                         </div>
@@ -316,8 +316,12 @@ export default function OrdersPage() {
                         {order.supplier_status !== 'Shipped' && (
                           <button
                             onClick={() => openBookingModal(order.order_no)}
-                            className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 rounded p-1 transition-colors"
-                            title="Book Shipment (Dry Run)"
+                            disabled={order.supplier_status === 'Awaiting Payment' || order.supplier_status === 'Cancelled'}
+                            className={`p-1 rounded transition-colors ${order.supplier_status === 'Awaiting Payment' || order.supplier_status === 'Cancelled'
+                              ? 'bg-white/5 text-gray-600 cursor-not-allowed'
+                              : 'bg-blue-600/20 hover:bg-blue-600/40 text-blue-400'
+                              }`}
+                            title={order.supplier_status === 'Awaiting Payment' ? 'Order not paid' : order.supplier_status === 'Cancelled' ? 'Order cancelled' : 'Book Shipment (Dry Run)'}
                           >
                             ✈
                           </button>
