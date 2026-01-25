@@ -274,7 +274,7 @@ export default function OrdersPage() {
                           {order.order_name?.split(' ')[0] || '-'}
                         </div>
                       </td>
-                      <td className="p-2 max-w-[200px]">
+                      <td className="p-2 max-w-[250px]">
                         <div className="truncate text-gray-500 text-[10px]" title={order.notes || ''}>
                           {order.notes || '-'}
                         </div>

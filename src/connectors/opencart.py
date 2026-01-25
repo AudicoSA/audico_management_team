@@ -133,7 +133,7 @@ class OpenCartConnector:
                         o.shipping_address_1, o.shipping_address_2, o.shipping_city, 
                         o.shipping_postcode, o.shipping_zone, o.shipping_country,
                         (
-                            SELECT GROUP_CONCAT(CONCAT(op.quantity, 'x ', op.model) SEPARATOR ', ')
+                            SELECT GROUP_CONCAT(CONCAT(op.quantity, 'x ', op.name) SEPARATOR ', ')
                             FROM {self.prefix}order_product op
                             WHERE op.order_id = o.order_id
                         ) as products_summary
