@@ -250,6 +250,7 @@ export default function OrdersPage() {
                 <tr>
                   <th className="p-2 border-b border-white/5 w-16">No.</th>
                   <th className="p-2 border-b border-white/5 max-w-[120px]">Customer</th>
+                  <th className="p-2 border-b border-white/5 max-w-[200px]">Products</th>
                   <th className="p-2 border-b border-white/5 w-24">Supplier</th>
                   <th className="p-2 border-b border-white/5 text-right w-20">Cost</th>
                   <th className="p-2 border-b border-white/5 w-20">Inv #</th>
@@ -271,6 +272,11 @@ export default function OrdersPage() {
                       <td className="p-2 max-w-[120px]">
                         <div className="truncate font-medium text-white" title={order.order_name || ''}>
                           {order.order_name?.split(' ')[0] || '-'}
+                        </div>
+                      </td>
+                      <td className="p-2 max-w-[200px]">
+                        <div className="truncate text-gray-500 text-[10px]" title={order.notes || ''}>
+                          {order.notes || '-'}
                         </div>
                       </td>
                       <td className="p-2 truncate max-w-[100px]" title={order.supplier || ''}>

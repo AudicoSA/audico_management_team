@@ -391,7 +391,8 @@ class OrdersLogisticsAgent:
                         cost=total, # Revenue
                         supplier_status=status_name, # Sync OpenCart status to Supplier Status field
                         order_paid=is_paid,
-                        notes=f"Email: {order.get('email')} | Phone: {order.get('telephone')}",
+                        notes=order.get("products_summary"), # Store products here as per workaround
+                        updates=f"Contact: {order.get('email')} | {order.get('telephone')}", # Move contact info here
                         last_modified_by="system_sync"
                     )
                     synced_count += 1

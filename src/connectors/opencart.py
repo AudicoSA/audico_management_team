@@ -131,7 +131,12 @@ class OpenCartConnector:
                         o.order_id, o.firstname, o.lastname, o.email, o.telephone,
                         o.order_status_id, os.name as status_name, o.total, o.date_added,
                         o.shipping_address_1, o.shipping_address_2, o.shipping_city, 
-                        o.shipping_postcode, o.shipping_zone, o.shipping_country
+                        o.shipping_postcode, o.shipping_zone, o.shipping_country,
+                        (
+                            SELECT GROUP_CONCAT(CONCAT(op.quantity, 'x ', op.model) SEPARATOR ', ')
+                            FROM {self.prefix}order_product op
+                            WHERE op.order_id = o.order_id
+                        ) as products_summary
                     FROM {self.prefix}order o
                     LEFT JOIN {self.prefix}order_status os ON (o.order_status_id = os.order_status_id AND os.language_id = 1)
                     ORDER BY o.date_added DESC
