@@ -96,8 +96,13 @@ async def get_orphaned_products():
         opencart = get_opencart_connector()
         supabase = get_supabase_connector()
         
-        # Get all SKUs from OpenCart
-        query = "SELECT product_id, sku, model FROM oc_product WHERE sku IS NOT NULL AND sku != ''"
+        # Get all SKUs and Names from OpenCart
+        query = """
+            SELECT p.product_id, p.sku, p.model, pd.name 
+            FROM oc_product p 
+            LEFT JOIN oc_product_description pd ON p.product_id = pd.product_id 
+            WHERE p.sku IS NOT NULL AND p.sku != '' AND pd.language_id = 1
+        """
         
         conn = opencart._get_connection()
         try:
@@ -116,7 +121,13 @@ async def get_orphaned_products():
         
         # Find orphaned products
         orphaned = [
-            p for p in opencart_products 
+            {
+                "product_id": p['product_id'],
+                "sku": p['sku'],
+                "model": p['model'],
+                "name": p['name']
+            }
+            for p in opencart_products 
             if p['sku'] not in supabase_skus
         ]
         
