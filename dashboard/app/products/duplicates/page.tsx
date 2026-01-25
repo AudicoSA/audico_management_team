@@ -448,10 +448,10 @@ export default function DuplicatesPage() {
                                         <p className="text-sm text-gray-600 mb-4">
                                             These products exist in OpenCart but not in any supplier feed. They may be discontinued or manually added.
                                         </p>
-                                        {orphaned.slice(0, 50).map((product, idx) => (
-                                            <div key={idx} className="border border-gray-200 rounded-lg p-3 mb-2">
-                                                <div className="text-sm">
-                                                    <strong>SKU:</strong> {product.sku} | <strong>ID:</strong> {product.product_id}
+                                        {orphaned.slice(0, 100).map((product, idx) => (
+                                            <div key={idx} className="border border-gray-200 rounded-lg p-3 mb-2 hover:bg-gray-50 bg-white">
+                                                <div className="text-sm text-gray-900">
+                                                    <strong className="text-gray-700">SKU:</strong> <span className="font-mono bg-gray-100 px-1 rounded">{product.sku}</span> <span className="text-gray-400">|</span> <strong className="text-gray-700">ID:</strong> {product.product_id}
                                                 </div>
                                             </div>
                                         ))}
@@ -472,10 +472,10 @@ export default function DuplicatesPage() {
                                         <p className="text-sm text-gray-600 mb-4">
                                             These products exist in supplier feeds but haven't been pushed to OpenCart yet.
                                         </p>
-                                        {missing.slice(0, 50).map((product, idx) => (
-                                            <div key={idx} className="border border-gray-200 rounded-lg p-3 mb-2">
-                                                <div className="text-sm">
-                                                    <strong>SKU:</strong> {product.sku} | <strong>Supplier:</strong> {product.supplier}
+                                        {missing.slice(0, 100).map((product, idx) => (
+                                            <div key={idx} className="border border-gray-200 rounded-lg p-3 mb-2 hover:bg-gray-50 bg-white">
+                                                <div className="text-sm text-gray-900">
+                                                    <strong className="text-gray-700">SKU:</strong> <span className="font-mono bg-gray-100 px-1 rounded">{product.sku}</span> <span className="text-gray-400">|</span> <strong className="text-gray-700">Supplier:</strong> {product.supplier}
                                                 </div>
                                             </div>
                                         ))}

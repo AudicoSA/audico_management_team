@@ -67,7 +67,7 @@ async def get_duplicate_names():
         GROUP BY pd.name
         HAVING count > 1
         ORDER BY count DESC
-        LIMIT 100
+        LIMIT 2000
         """
         
         conn = opencart._get_connection()
@@ -124,7 +124,7 @@ async def get_orphaned_products():
         
         return {
             "total": len(orphaned),
-            "orphaned": orphaned[:100]  # Limit to first 100
+            "orphaned": orphaned[:2000]  # Increased limit
         }
         
     except Exception as e:
@@ -165,7 +165,7 @@ async def get_missing_products():
         
         return {
             "total": len(missing),
-            "missing": missing[:100]  # Limit to first 100
+            "missing": missing[:2000]  # Increased limit
         }
         
     except Exception as e:
