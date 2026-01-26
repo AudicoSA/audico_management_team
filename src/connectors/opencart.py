@@ -501,6 +501,60 @@ class OpenCartConnector:
             if connection:
                 connection.close()
 
+    async def add_product_special(self, product_id: int, price: float, date_start: str = None, date_end: str = None, priority: int = 1) -> bool:
+        """
+        Add a special price to a product.
+        """
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                # Default dates if None
+                if not date_start: date_start = "0000-00-00"
+                if not date_end: date_end = "0000-00-00"
+                
+                # Check for existing special? Or just add new one?
+                # Usually we might want to clear old specials first or check if one exists.
+                # For this implementation, we will INSERT a new one.
+                sql = f"""
+                    INSERT INTO {self.prefix}product_special 
+                    (product_id, customer_group_id, priority, price, date_start, date_end)
+                    VALUES (%s, 1, %s, %s, %s, %s)
+                """
+                # customer_group_id = 1 (Default Retail)
+                cursor.execute(sql, (product_id, priority, price, date_start, date_end))
+                
+                # IMPORTANT: Update date_modified on main product table to trigger cache invalidation
+                cursor.execute(f"UPDATE {self.prefix}product SET date_modified = NOW() WHERE product_id = %s", (product_id,))
+                
+            connection.commit()
+            logger.info("product_special_added", product_id=product_id, price=price)
+            return True
+            
+        except Exception as e:
+            if connection: connection.rollback()
+            logger.error("add_product_special_failed", product_id=product_id, error=str(e))
+            return False
+        finally:
+            if connection: connection.close()
+
+    async def clear_product_specials(self, product_id: int) -> bool:
+        """Remove all specials for a product."""
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                sql = f"DELETE FROM {self.prefix}product_special WHERE product_id = %s"
+                cursor.execute(sql, (product_id,))
+            connection.commit()
+            return True
+        except Exception as e:
+            if connection: connection.rollback()
+            logger.error("clear_product_specials_failed", product_id=product_id, error=str(e))
+            return False
+        finally:
+            if connection: connection.close()
+
     async def create_product(self, product_data: Dict[str, Any]) -> Optional[int]:
         """Create a new product in OpenCart."""
         connection = None

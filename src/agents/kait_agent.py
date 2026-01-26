@@ -324,7 +324,37 @@ Output JSON:
             result = await agent.ingest_flyer(path, supplier_name=sender)
             
             if result.get("status") == "success":
-                await self.log_system_event(f"Ingested Specials from {sender}: {filename} ({result.get('deals_count')} deals)")
+                msg_text = f"Ingested Specials from {sender}: {filename} ({result.get('deals_count')} deals)"
+                await self.log_system_event(msg_text)
+                
+                # Send Confirmation Email
+                # Parse sender email
+                to_email = sender
+                if "<" in sender:
+                    import re
+                    match = re.search(r"<([^>]+)>", sender)
+                    if match:
+                        to_email = match.group(1)
+                
+                from src.connectors.email_client import get_email_client
+                ec = get_email_client()
+                
+                subject = f"Re: Specials Loaded - {filename}"
+                body = f"""Hi there,
+                
+I have successfully processed the specials from '{filename}'.
+
+**Summary:**
+- Deals Found: {result.get('deals_count')}
+- Action: Updated OpenCart prices & cleared cache.
+
+They should be live on the website now.
+
+Kind regards,
+Kait
+"""
+                ec.send_email(to_email, subject, body)
+                
             else:
                 await self.log_system_event(f"Failed to ingest specials from {sender}: {filename} - {result.get('message')}")
 

@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { Mail, Package, TrendingUp, Activity, CheckCircle2, Clock, AlertCircle, ArrowUpRight, Plus, CreditCard } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import ChatWidget from './components/ChatWidget'
 
 export default function Home() {
   const [metrics, setMetrics] = useState({
@@ -77,28 +78,8 @@ export default function Home() {
             />
           </div>
 
-          {/* Activity Graph Placeholder (Activity Summary) */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-[#1c1c1c] border border-white/5 rounded-2xl p-6 relative overflow-hidden"
-          >
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-semibold text-white">Activity Summary</h3>
-              <div className="flex bg-black/20 p-1 rounded-lg">
-                <button className="px-3 py-1 text-xs font-medium text-gray-400 hover:text-white rounded-md">Monthly</button>
-                <button className="px-3 py-1 text-xs font-medium text-black bg-lime-400 rounded-md shadow-sm">Weekly</button>
-              </div>
-            </div>
-
-            {/* Fake Chart Visualization */}
-            <div className="h-48 flex items-end justify-between gap-2 px-2">
-              {[40, 65, 45, 80, 55, 70, 40, 60, 75, 50, 65, 85].map((h, i) => (
-                <div key={i} className="w-full bg-gradient-to-t from-gray-800 to-gray-700/50 rounded-t-sm hover:from-lime-500/50 hover:to-lime-400/50 transition-all duration-300" style={{ height: `${h}%` }}></div>
-              ))}
-            </div>
-          </motion.div>
+          {/* Activity Graph Replaced by Ask Kait Chat */}
+          <ChatWidget />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <LinkCard

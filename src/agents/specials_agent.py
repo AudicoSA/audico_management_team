@@ -145,10 +145,86 @@ class SpecialsAgent:
             self.sb.client.table("supplier_specials").insert(payload).execute()
             
             logger.info("specials_saved", count=len(deals))
+            
+            # AUTO-SYNC: Push to OpenCart immediately
+            try:
+                logger.info("Starting Auto-Sync to OpenCart...")
+                await self.sync_to_opencart(deals, valid_until)
+            except Exception as e:
+                logger.error(f"Auto-Sync Failed: {e}")
+            
             return {"status": "success", "deals_count": len(deals), "data": payload}
         except Exception as e:
              logger.error(f"Error saving to DB: {e}")
              raise e
+
+    async def sync_to_opencart(self, deals: List[Dict], valid_until: Optional[str]):
+        """
+        Apply computed specials directly to OpenCart products.
+        Formula: (Cost * 1.15 * 1.15) rounded to nearest 10.
+        """
+        from src.connectors.opencart import get_opencart_connector
+        oc = get_opencart_connector()
+        
+        # Date Logic
+        # OpenCart needs YYYY-MM-DD
+        date_end = valid_until[:10] if valid_until else "2026-02-28" # Validation needed
+        date_start = "0000-00-00"
+        
+        # Pricing Config
+        VAT = 1.15
+        MARGIN = 1.15 
+        
+        updated_count = 0
+        
+        for deal in deals:
+            # 1. Parse Cost
+            cost_str = str(deal.get("price", "0")).replace("R", "").replace(" ", "").replace(",", "")
+            try:
+                cost = float(cost_str)
+            except:
+                continue
+
+            # 2. Calculate Retail
+            retail_price = (cost * VAT) * MARGIN
+            # Round to nearest 10
+            retail_price = round(retail_price / 10) * 10.0
+            
+            # 3. Match Product
+            sku = deal.get("sku", "")
+            name = deal.get("product_name", "")
+            
+            if not sku and not name: continue
+            
+            product = None
+            if sku:
+                product = await oc.get_product_by_sku(sku)
+                if not product:
+                    product = await oc.get_product_by_model(sku)
+            
+            if not product and name:
+                 # Name Search Fallback
+                 candidates = await oc.search_products_by_name(name)
+                 if len(candidates) == 1:
+                     product = candidates[0]
+            
+            if product:
+                # 4. Apply Special
+                # Ensure we clear old ones or just add? 
+                # If we clear, we might remove other unrelated specials. 
+                # But typically we want THIS special to be authoritative.
+                await oc.clear_product_specials(product['product_id'])
+                
+                await oc.add_product_special(
+                    product_id=product['product_id'],
+                    price=retail_price,
+                    date_start=date_start,
+                    date_end=date_end
+                )
+                updated_count += 1
+                logger.info(f"Synced Special: {sku} -> R{retail_price}")
+        
+        logger.info(f"Auto-Sync Complete. Updated: {updated_count}")
 
     async def search_specials(self, query: str) -> str:
         """
