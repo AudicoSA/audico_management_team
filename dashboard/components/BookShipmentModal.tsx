@@ -130,7 +130,7 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                 alert('Failed to save new supplier, but proceeding with booking.')
             } else {
                 // Refresh suppliers for next time
-                fetchSuppliers()
+                loadAndSelectSupplier()
             }
         }
 
