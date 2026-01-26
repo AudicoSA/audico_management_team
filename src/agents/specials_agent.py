@@ -244,12 +244,24 @@ class SpecialsAgent:
             hits = []
             for flyer in response.data:
                 deals = flyer.get("deals", [])
-                flyer_title = flyer.get("title")
+                flyer_title = flyer.get("title", "").lower()
+                query_lower = query.lower()
+                
+                # 1. Check if Query matches the Flyer Title (e.g. "Logitech Specials")
+                if query_lower in flyer_title:
+                   # Return top 10 deals from this matching flyer
+                   hits.append(f"--- Found in '{flyer.get('title')}' ---")
+                   for d in deals[:10]:
+                       hits.append(f"- {d.get('product_name')} @ {d.get('price')}")
+                   if len(deals) > 10:
+                       hits.append(f"... and {len(deals)-10} more.")
+                   continue # Skip individual item check if whole flyer matches
+                
+                # 2. Check individual items
                 for d in deals:
-                    # Simple fuzzy match in python
                     p_name = d.get("product_name", "").lower()
-                    if query.lower() in p_name:
-                        hits.append(f"- {d.get('product_name')} @ {d.get('price')} (Source: {flyer_title})")
+                    if query_lower in p_name:
+                        hits.append(f"- {d.get('product_name')} @ {d.get('price')} (Source: {flyer.get('title')})")
             
             if not hits:
                 return "No specials found matching that query."
