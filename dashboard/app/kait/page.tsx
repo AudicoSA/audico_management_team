@@ -70,6 +70,23 @@ export default function KaitDashboard() {
         setTimeout(fetchWorkflows, 5000)
     }
 
+    const [rejectingId, setRejectingId] = useState<string | null>(null)
+    const [feedbackText, setFeedbackText] = useState('')
+
+    const confirmReject = async (id: string) => {
+        if (!feedbackText.trim()) return
+
+        await supabase.from('kait_email_drafts').update({
+            status: 'changes_requested',
+            feedback: feedbackText
+        }).eq('id', id)
+
+        // Optimistic update
+        setDrafts(drafts.filter(d => d.id !== id))
+        setRejectingId(null)
+        setFeedbackText('')
+    }
+
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'new': return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
@@ -193,14 +210,53 @@ export default function KaitDashboard() {
                                         </div>
                                         <div className="text-xs text-gray-300 font-semibold mb-1">To: {draft.to_email}</div>
                                         <div className="text-xs text-white font-bold mb-2">{draft.subject}</div>
-                                        <div className="text-xs text-gray-400 italic mb-3 line-clamp-3 bg-black/20 p-2 rounded">
-                                            {draft.body_text}
-                                        </div>
-                                        <button
-                                            onClick={() => approveDraft(draft.id)}
-                                            className="w-full py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors">
-                                            <Mail className="w-3 h-3" /> Approve & Send
-                                        </button>
+
+                                        {/* Show Reject Input if this draft is being rejected */}
+                                        {rejectingId === draft.id ? (
+                                            <div className="flex flex-col gap-2 mt-2 bg-black/40 p-2 rounded border border-red-500/30">
+                                                <p className="text-[10px] text-red-300 font-semibold">Teach Kait: What's wrong?</p>
+                                                <textarea
+                                                    className="w-full bg-[#111] border border-white/20 rounded p-1 text-xs text-white"
+                                                    rows={2}
+                                                    placeholder="e.g. Sonos is supplied by Planetworld..."
+                                                    value={feedbackText}
+                                                    onChange={(e) => setFeedbackText(e.target.value)}
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => confirmReject(draft.id)}
+                                                        className="flex-1 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[10px] font-bold rounded">
+                                                        Submit Correction
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { setRejectingId(null); setFeedbackText('') }}
+                                                        className="py-1 px-2 bg-gray-700 hover:bg-gray-600 text-white text-[10px] font-bold rounded">
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="text-xs text-gray-400 italic mb-3 line-clamp-3 bg-black/20 p-2 rounded">
+                                                    {draft.body_text}
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => approveDraft(draft.id)}
+                                                        className="flex-1 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors">
+                                                        <Mail className="w-3 h-3" /> Approve & Send
+                                                    </button>
+
+                                                    {/* Reject Button */}
+                                                    <button
+                                                        onClick={() => { setRejectingId(draft.id); setFeedbackText('') }}
+                                                        className="py-1.5 px-3 bg-red-900/40 border border-red-500/30 hover:bg-red-900/60 text-red-200 text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors"
+                                                        title="Reject & Teach">
+                                                        <AlertCircle className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
                                 ))}
                             </div>

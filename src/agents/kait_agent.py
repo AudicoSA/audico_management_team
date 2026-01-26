@@ -70,6 +70,9 @@ class KaitAgent:
         # 0. Process Outbox (Send Approved Drafts)
         await self.process_outbox()
 
+        # 0.5 Process Feedback (Reject & Teach)
+        await self.process_feedback_queue()
+
         # 1. Process New Orders (Trigger: Assigned to Supplier but not in Workflow)
         await self.process_new_orders()
         
@@ -79,7 +82,112 @@ class KaitAgent:
         # 3. Nudge Check (Wait > 4h)
         await self.process_nudges()
 
-    async def process_outbox(self):
+    async def process_feedback_queue(self):
+        """
+        Check for drafts with status='changes_requested' and process user feedback.
+        REINFORCEMENT LEARNING STEP.
+        """
+        # Fetch rejected drafts
+        response = self.sb.client.table("kait_email_drafts").select("*").eq("status", "changes_requested").execute()
+        
+        for draft in response.data:
+            feedback = draft.get("feedback")
+            order_no = draft["order_no"]
+            print(f"Processing Feedback for Order {order_no}: {feedback}")
+            
+            # Simple Rule Engine (LLM Lite)
+            # 1. Check if feedback is a "Correction" (Supplier update)
+            if "supplier" in feedback.lower() or "recipient" in feedback.lower() or " wrong " in feedback.lower():
+                # Heuristic: User is correcting the supplier.
+                # Try to extract the correction using OpenAI (if available) or basic parsing
+                # For Phase 5 MVP, let's use a basic string search or assume specific intent.
+                pass 
+                
+            # For now, let's just use GPT-4o-mini to interpret the correction and redraft
+            # We will use the 'run_categorization' logic but simplified for text generation.
+            
+            await self.action_apply_feedback(draft, feedback)
+
+    async def action_apply_feedback(self, draft: Dict[str, Any], feedback: str):
+        """
+        Apply feedback to a draft using LLM.
+        """
+        from openai import OpenAI
+        from src.utils.config import get_config
+        
+        config = get_config()
+        client = OpenAI(api_key=config.openai_api_key)
+        
+        prompt = f"""
+You are Kait, an AI Assistant. You drafted an email, but the human user rejected it with feedback.
+Your goal:
+1. Understand the feedback.
+2. If it's a permanent rule (e.g. "Sonos is always Planetworld"), extract a Memory.
+3. Rewrite the email draft based on the feedback.
+
+Original Draft:
+To: {draft['to_email']}
+Subject: {draft['subject']}
+Body:
+{draft['body_text']}
+
+User Feedback: "{feedback}"
+
+Output JSON:
+{{
+  "new_to_email": "updated email if changed, else original",
+  "new_body": "rewritten body text",
+  "memory_key": "optional key e.g. 'brand:sonos' if a rule was learned",
+  "memory_value": "optional value e.g. 'Planetworld' if a rule was learned",
+  "explanation": "brief explanation of what you changed"
+}}
+"""
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            result = json.loads(response.choices[0].message.content)
+            
+            # 1. Store Memory (if learned)
+            if result.get("memory_key") and result.get("memory_value"):
+                self.sb.client.table("kait_memories").insert({
+                    "category": "learning",
+                    "key_pattern": result["memory_key"],
+                    "value": result["memory_value"],
+                    "confidence": 1.0 # Taught by human
+                }).execute()
+                await self.log_action(draft['order_no'], f"Learned Rule: {result['memory_key']} -> {result['memory_value']}")
+
+            # 2. Update Draft
+            updates = {
+                "status": "draft", # Ready for review again
+                "to_email": result.get("new_to_email", draft["to_email"]),
+                "body_text": result.get("new_body", draft["body_text"]),
+                "feedback": None, # Clear feedback
+                "retry_count": draft.get("retry_count", 0) + 1
+            }
+            
+            # If email changed, we might need to lookup address again? 
+            # The LLM might give us "Planetworld", but we need "orders@planetworld...".
+            # For this MVP, let's assume the LLM might struggle with exact emails unless we provide a lookup tool.
+            # IMPROVEMENT: If LLM suggests a Supplier Name change, we should do a DB lookup here.
+            
+            # Let's check if 'new_to_email' looks like an email or a name
+            if "@" not in updates["to_email"]:
+                # Try to find a supplier address
+                sup_info = await self.sb.get_supplier_address(updates["to_email"])
+                if sup_info and sup_info.get("contact_email"):
+                    updates["to_email"] = sup_info["contact_email"]
+            
+            self.sb.client.table("kait_email_drafts").update(updates).eq("id", draft["id"]).execute()
+            await self.log_action(draft['order_no'], f"Redrafted email based on feedback: {result['explanation']}")
+
+        except Exception as e:
+            logger.error(f"LLM Error on Feedback: {e}")
+            await self.log_action(draft['order_no'], f"Failed to apply feedback: {e}")
+
         """
         Check for emails in 'kait_email_drafts' with status='approved' and send them.
         """
