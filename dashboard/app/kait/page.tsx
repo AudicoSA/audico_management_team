@@ -27,10 +27,17 @@ export default function KaitDashboard() {
     const [workflows, setWorkflows] = useState<Workflow[]>([])
     const [loading, setLoading] = useState(true)
 
+    const [drafts, setDrafts] = useState<any[]>([])
+
     useEffect(() => {
         fetchWorkflows()
+        fetchDrafts()
+
         // Poll every 10s for live feel
-        const interval = setInterval(fetchWorkflows, 10000)
+        const interval = setInterval(() => {
+            fetchWorkflows()
+            fetchDrafts()
+        }, 10000)
         return () => clearInterval(interval)
     }, [])
 
@@ -43,6 +50,24 @@ export default function KaitDashboard() {
 
         if (data) setWorkflows(data)
         setLoading(false)
+    }
+
+    const fetchDrafts = async () => {
+        const { data } = await supabase
+            .from('kait_email_drafts')
+            .select('*')
+            .eq('status', 'draft')
+            .order('created_at', { ascending: true })
+
+        if (data) setDrafts(data)
+    }
+
+    const approveDraft = async (id: string) => {
+        await supabase.from('kait_email_drafts').update({ status: 'approved' }).eq('id', id)
+        // Optimistic update
+        setDrafts(drafts.filter(d => d.id !== id))
+        // Refresh workflows shortly after to see 'Sent' status update
+        setTimeout(fetchWorkflows, 5000)
     }
 
     const getStatusColor = (status: string) => {
@@ -86,6 +111,11 @@ export default function KaitDashboard() {
                     <span className="inline-flex items-center rounded-full border border-[#ccff00] px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-[#ccff00]">
                         Active Workflows: {workflows.length}
                     </span>
+                    {drafts.length > 0 && (
+                        <span className="inline-flex items-center rounded-full border border-orange-500 px-2.5 py-0.5 text-xs font-semibold text-orange-500 animate-pulse">
+                            Drafts Waiting: {drafts.length}
+                        </span>
+                    )}
                 </div>
             </div>
 
@@ -144,27 +174,61 @@ export default function KaitDashboard() {
                     </div>
                 </div>
 
-                {/* Notifications / Activity Feed (Right Column) */}
-                <div className="flex flex-col gap-4 overflow-hidden">
-                    <h2 className="text-xl font-semibold flex items-center gap-2">
-                        <MessageSquare className="w-5 h-5 text-purple-400" />
-                        Activity Stream
-                    </h2>
-                    {/* Card Replacement */}
-                    <div className="rounded-xl border bg-[#111] text-card-foreground shadow border-white/5 p-4 h-full overflow-hidden flex flex-col">
-                        {/* ScrollArea Replacement */}
-                        <div className="flex-1 overflow-y-auto">
-                            <div className="space-y-6 relative border-l border-white/10 ml-3 pl-6 py-2">
-                                {workflows.flatMap(w => w.logs.map(l => ({ log: l, order: w.order_no })))
-                                    // sort randomly or by time if we had it parsed, simple reverse for now
-                                    .slice(0, 50)
-                                    .map((item, i) => (
-                                        <div key={i} className="relative">
-                                            <div className="absolute -left-[29px] top-1 h-3 w-3 rounded-full bg-[#ccff00] border-2 border-[#111]"></div>
-                                            <div className="text-xs text-gray-500 mb-1">Order #{item.order}</div>
-                                            <p className="text-sm text-gray-300 leading-snug">{item.log}</p>
+                {/* Right Column: Outbox + Activity */}
+                <div className="flex flex-col gap-4 overflow-hidden h-full">
+
+                    {/* Outbox Section (Only Shows if Drafts Exist) */}
+                    {drafts.length > 0 && (
+                        <div className="flex flex-col gap-2 shrink-0 max-h-[50%]">
+                            <h2 className="text-xl font-semibold flex items-center gap-2 text-orange-400">
+                                <Mail className="w-5 h-5" />
+                                Review Needed ({drafts.length})
+                            </h2>
+                            <div className="overflow-y-auto space-y-3 pr-2">
+                                {drafts.map(draft => (
+                                    <div key={draft.id} className="border border-orange-500/30 bg-orange-500/5 rounded-lg p-3 relative group">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="text-xs font-bold text-orange-300">Order #{draft.order_no}</span>
+                                            <span className="text-[10px] text-gray-500">{new Date(draft.created_at).toLocaleTimeString()}</span>
                                         </div>
-                                    ))}
+                                        <div className="text-xs text-gray-300 font-semibold mb-1">To: {draft.to_email}</div>
+                                        <div className="text-xs text-white font-bold mb-2">{draft.subject}</div>
+                                        <div className="text-xs text-gray-400 italic mb-3 line-clamp-3 bg-black/20 p-2 rounded">
+                                            {draft.body_text}
+                                        </div>
+                                        <button
+                                            onClick={() => approveDraft(draft.id)}
+                                            className="w-full py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors">
+                                            <Mail className="w-3 h-3" /> Approve & Send
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Activity Feed */}
+                    <div className="flex flex-col gap-2 overflow-hidden flex-1">
+                        <h2 className="text-xl font-semibold flex items-center gap-2">
+                            <MessageSquare className="w-5 h-5 text-purple-400" />
+                            Activity Stream
+                        </h2>
+                        {/* Card Replacement */}
+                        <div className="rounded-xl border bg-[#111] text-card-foreground shadow border-white/5 p-4 h-full overflow-hidden flex flex-col">
+                            {/* ScrollArea Replacement */}
+                            <div className="flex-1 overflow-y-auto">
+                                <div className="space-y-6 relative border-l border-white/10 ml-3 pl-6 py-2">
+                                    {workflows.flatMap(w => w.logs.map(l => ({ log: l, order: w.order_no })))
+                                        // sort randomly or by time if we had it parsed, simple reverse for now
+                                        .slice(0, 50)
+                                        .map((item, i) => (
+                                            <div key={i} className="relative">
+                                                <div className="absolute -left-[29px] top-1 h-3 w-3 rounded-full bg-[#ccff00] border-2 border-[#111]"></div>
+                                                <div className="text-xs text-gray-500 mb-1">Order #{item.order}</div>
+                                                <p className="text-sm text-gray-300 leading-snug">{item.log}</p>
+                                            </div>
+                                        ))}
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -15,20 +15,39 @@ class EmailClient:
     Standard IMAP/SMTP Client for Kait.
     """
     def __init__(self):
+        from src.connectors.supabase import get_supabase_connector
         self.config = get_config()
+        self.sb = get_supabase_connector()
+        # Updated to GMAIL settings due to Split DNS resolution
         self.email = "kait@audicoonline.co.za"
-        self.password = self.config.kait_email_password
-        self.smtp_server = "smtp.audicoonline.co.za"
+        self.password = self.config.kait_email_password # Needs to be Google App Password
+        self.smtp_server = "smtp.gmail.com"
         self.smtp_port = 465
-        self.imap_server = "mail.audicoonline.co.za"
+        self.imap_server = "imap.gmail.com"
         self.imap_port = 993
 
         if not self.password:
             logger.warning("kait_email_password_missing")
 
+    def save_draft(self, order_no: str, to_email: str, subject: str, body_text: str, cc: Optional[List[str]] = None, metadata: Optional[Dict] = None) -> str:
+        """Save email to Supabase drafts table instead of sending."""
+        payload = {
+            "order_no": order_no,
+            "to_email": to_email,
+            "cc_emails": cc if cc else [],
+            "subject": subject,
+            "body_text": body_text,
+            "status": "draft",
+            "metadata": metadata or {}
+        }
+        res = self.sb.client.table("kait_email_drafts").insert(payload).execute()
+        draft_id = res.data[0]["id"]
+        logger.info(f"Saved email draft for {order_no}: {draft_id}")
+        return draft_id
+
     def send_email(self, to_email: str, subject: str, body_text: str, body_html: Optional[str] = None, cc: Optional[List[str]] = None) -> Optional[str]:
         """Send an email via SMTP (SSL). Returns Message-ID if successful, None otherwise."""
-        from email.utils import making_msgid
+        from email.utils import make_msgid
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
@@ -89,11 +108,41 @@ class EmailClient:
                         references = msg.get("References")
                         
                         body = ""
+                        attachments = []
+                        
                         if msg.is_multipart():
                             for part in msg.walk():
-                                if part.get_content_type() == "text/plain":
+                                content_type = part.get_content_type()
+                                content_disposition = str(part.get("Content-Disposition"))
+
+                                if content_type == "text/plain" and "attachment" not in content_disposition:
                                     body = part.get_payload(decode=True).decode()
-                                    break
+                                
+                                # Setup Attachment Handling
+                                if "attachment" in content_disposition:
+                                    filename = part.get_filename()
+                                    if filename:
+                                        # Decode filename if needed
+                                        filename_parts = decode_header(filename)[0]
+                                        if isinstance(filename_parts[0], bytes):
+                                            filename = filename_parts[0].decode(filename_parts[1] or "utf-8")
+                                        else:
+                                            filename = filename_parts[0]
+
+                                        # Save PDF only
+                                        if filename.lower().endswith(".pdf"):
+                                            import os
+                                            temp_dir = os.path.join(os.getcwd(), "temp", "attachments")
+                                            os.makedirs(temp_dir, exist_ok=True)
+                                            filepath = os.path.join(temp_dir, f"{e_id.decode()}_{filename}")
+                                            
+                                            with open(filepath, "wb") as f:
+                                                f.write(part.get_payload(decode=True))
+                                            
+                                            attachments.append({
+                                                "filename": filename,
+                                                "path": filepath
+                                            })
                         else:
                             body = msg.get_payload(decode=True).decode()
 
@@ -103,7 +152,8 @@ class EmailClient:
                             "from": from_,
                             "body": body,
                             "in_reply_to": in_reply_to,
-                            "references": references
+                            "references": references,
+                            "attachments": attachments
                         })
             
             mail.close()

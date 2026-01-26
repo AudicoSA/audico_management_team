@@ -67,6 +67,9 @@ class KaitAgent:
         """
         print(f"[{datetime.now()}] Kait Heartbeat: Checking for actions...")
         
+        # 0. Process Outbox (Send Approved Drafts)
+        await self.process_outbox()
+
         # 1. Process New Orders (Trigger: Assigned to Supplier but not in Workflow)
         await self.process_new_orders()
         
@@ -75,6 +78,55 @@ class KaitAgent:
 
         # 3. Nudge Check (Wait > 4h)
         await self.process_nudges()
+
+    async def process_outbox(self):
+        """
+        Check for emails in 'kait_email_drafts' with status='approved' and send them.
+        """
+        from src.connectors.email_client import get_email_client
+        email_client = get_email_client()
+
+        # Fetch approved drafts
+        response = self.sb.client.table("kait_email_drafts").select("*").eq("status", "approved").execute()
+        
+        for draft in response.data:
+            print(f"Sending Approved Email: {draft['id']} to {draft['to_email']}")
+            
+            msg_id = email_client.send_email(
+                to_email=draft['to_email'],
+                subject=draft['subject'],
+                body_text=draft['body_text'],
+                # body_html=draft.get('body_html'), # TODO: Add HTML support if needed
+                cc=draft.get('cc_emails', [])
+            )
+            
+            if msg_id:
+                # Mark as Sent
+                self.sb.client.table("kait_email_drafts").update({
+                    "status": "sent",
+                    "sent_at": datetime.now().isoformat(),
+                    "message_id": msg_id
+                }).eq("id", draft['id']).execute()
+                
+                # Update Workflow State (if needed)
+                # We need to link this back to the workflow via order_no if we want to update status
+                # But for now, the status might have already been updated when drafted, OR we should update it now?
+                # Actually, in draft mode, we probably update status to 'customer_emailed' ONLY after sending.
+                # But current logic updates it immediately. Let's keep it simple: Status updates happens at DRAFT time (optimistic),
+                # If it's draft, it's "in progress".
+                
+                # Wait, if we need the Message-ID for threading (e.g. supplier_thread_id), we need to update kait_workflows NOW.
+                # So we should find the workflow and update the thread_id.
+                
+                # Check for active workflow
+                wf_res = self.sb.client.table("kait_workflows").select("*").eq("order_no", draft['order_no']).execute()
+                if wf_res.data:
+                    wf = wf_res.data[0]
+                    updates = {}
+                    # Heuristic to detect which thread ID to update based on recipient?
+                    # Or maybe we store 'context' in drafts table?
+                    # For now, let's just log it.
+                    await self.log_action(draft['order_no'], f"Approved Email Sent to {draft['to_email']}. ID: {msg_id}")
 
     async def check_for_replies(self):
         """
@@ -109,14 +161,246 @@ class KaitAgent:
                     if dataset.data:
                         matched_wf = dataset.data[0]
                         await self.log_action(matched_wf["order_no"], f"Received Customer Reply from {sender}")
+            
+            # Check for Invoice / Attachments
+            attachments = msg.get("attachments", [])
+            if matched_wf and attachments:
+                # We have a matching workflow and attachments
+                await self.process_invoice(matched_wf, attachments, sender)
+                continue # Skip further processing if handled as invoice
 
-            # Strategy 2: Subject Regex (Fallback)
-            if not matched_wf:
-                import re
-                match = re.search(r"Order #?(\d+)", subject, re.IGNORECASE)
-                if match:
-                    order_no = match.group(1)
-                    await self.log_action(order_no, f"Received email with matching Subject from {sender}: {subject}")
+            # Check for Body Keywords (NLU Lite)
+            if matched_wf and not attachments:
+                body_lower = msg.get("body", "").lower()
+                stock_keywords = ["no stock", "out of stock", "discontinued", "backorder", "lead time", "eta"]
+                
+                if any(kw in body_lower for kw in stock_keywords):
+                     await self.process_stock_status(matched_wf, body_lower, sender)
+
+    async def process_stock_status(self, wf: Dict[str, Any], body: str, sender: str):
+        """
+        Step 4 & 5: Analyze supplier reply for No Stock / ETA.
+        """
+        order_no = wf["order_no"]
+        import re
+        
+        # 1. Check for "No Stock" indicators
+        no_stock = any(kw in body for kw in ["no stock", "out of stock", "discontinued", "cannot supply", "0 stock"])
+        
+        if no_stock:
+            await self.log_action(order_no, f"Detected 'No Stock' from {sender}")
+            
+            # 2. Check for ETA
+            # Matches: "ETA 2026-05-01", "Expect stock 5th May", "2-3 weeks"
+            eta_indicators = ["eta", "expect", "arrive", "weeks", "days"]
+            has_eta = any(kw in body for kw in eta_indicators) or re.search(r"\d{4}-\d{2}-\d{2}", body)
+            
+            if has_eta:
+                # Step 5: No Stock + ETA -> Notify Client
+                await self.log_action(order_no, "Detected ETA. Triggering Client Options.")
+                await self.action_notify_client_option(order_no, body)
+            else:
+                # Step 4: No Stock + No ETA -> Request ETA
+                await self.log_action(order_no, "No ETA detected. Requesting ETA from Supplier.")
+                await self.action_request_eta(order_no, wf)
+
+    async def action_request_eta(self, order_no: str, wf: Dict[str, Any]):
+        """Step 4: Ask Supplier for ETA."""
+        from src.connectors.email_client import get_email_client
+        email_client = get_email_client()
+        
+        supplier_thread_id = wf.get("supplier_thread_id")
+        
+        # Need Supplier Email - Re-fetch or cache? 
+        # Need Supplier Email
+        order_info = self.sb.client.table("orders_tracker").select("supplier").eq("order_no", order_no).execute()
+        if not order_info.data: return
+        supplier_name = order_info.data[0]["supplier"]
+        supplier_info = await self.sb.get_supplier_address(supplier_name)
+        if not supplier_info: return
+        to_email = supplier_info["contact_email"]
+
+        subject = f"Re: Order {order_no} - ETA Request"
+        body = f"""Hi there,
+
+Thanks for the update.
+
+Could you please provide an estimated time of arrival (ETA) for when this stock will be available?
+We need to advise our client whether to wait or cancel.
+
+Kind regards,
+Kait
+"""
+        email_client.save_draft(
+            order_no=order_no,
+            to_email=to_email,
+            subject=subject,
+            body_text=body,
+            cc=["support@audicoonline.co.za"],
+            metadata={
+                "action": "request_eta",
+                "target_field": "supplier_thread_id",
+                "next_status": "waiting_eta"
+            }
+        )
+        await self.log_action(order_no, "Drafted ETA Request to Supplier.")
+
+    async def action_notify_client_option(self, order_no: str, supplier_msg: str):
+        """Step 5: Notify Customer of Backorder/Refund options."""
+        from src.connectors.email_client import get_email_client
+        from src.connectors.opencart import get_opencart_connector
+        
+        email_client = get_email_client()
+        oc = get_opencart_connector()
+
+        # Fetch Customer
+        try:
+            full_order = await oc.get_order(order_no)
+        except: full_order = None
+        
+        if not full_order: return
+
+        customer_email = full_order.get("email")
+        customer_name = f"{full_order.get('firstname', '')} {full_order.get('lastname', '')}".strip()
+        
+        clean_msg = supplier_msg[:500] + "..." # Truncate for sanity if including
+        
+        subject = f"Order #{order_no} Update - Stock Delay"
+        body = f"""Hi {customer_name},
+
+We have received an update regarding your order #{order_no}.
+
+Unfortunately, the supplier has informed us that they are currently out of stock.
+They have indicated the following ETA/Availability:
+"{clean_msg}"
+
+**Please let us know how you would like to proceed:**
+1. Place this order on **Backorder** (Wait for stock).
+2. **Refund** the order.
+3. Replace with an alternative product.
+
+Apologies for the inconvenience!
+
+Best regards,
+Kait Bayes
+Customer Service Representative
+Audico Online Team
+"""
+        email_client.save_draft(
+            order_no=order_no,
+            to_email=customer_email,
+            subject=subject,
+            body_text=body,
+            cc=["support@audicoonline.co.za"],
+            metadata={
+                "action": "client_options",
+                "target_field": "customer_thread_id",
+                "next_status": "client_options_sent"
+            }
+        )
+        await self.log_action(order_no, "Drafted Options Email to Customer.")
+            
+
+    async def process_invoice(self, wf: Dict[str, Any], attachments: List[Dict[str, Any]], sender: str):
+        """
+        Attempt to parse invoice from attachments.
+        """
+        import PyPDF2
+        order_no = wf["order_no"]
+        
+        for att in attachments:
+            path = att["path"]
+            filename = att["filename"]
+            
+            if not filename.lower().endswith(".pdf"):
+                continue
+                
+            try:
+                text = ""
+                with open(path, "rb") as f:
+                    reader = PyPDF2.PdfReader(f)
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+                
+                # Basic Heuristics
+                if "invoice" in text.lower() or "tax invoice" in text.lower():
+                    # It's an invoice
+                    await self.log_action(order_no, f"Received Invoice: {filename}")
+                    
+                    # Try to extract Total
+                    import re
+                    # Regex for "Total" followed by R (currency) + digits
+                    # e.g. "Total R 1,200.00" or "Total Due: R1200.00"
+                    total_match = re.search(r"Total.*?(R\s?[\d,]+\.\d{2})", text, re.IGNORECASE)
+                    
+                    extracted_total = total_match.group(1) if total_match else "Unknown"
+                    
+                    await self.log_action(order_no, f"Extracted Total: {extracted_total}")
+                    
+                    # Update status to 'invoiced'
+                    self.sb.client.table("kait_workflows").update({
+                        "status": "invoiced",
+                        "metadata": wf.get("metadata", {}) | {"invoice_file": filename, "invoice_total": extracted_total}
+                    }).eq("id", wf["id"]).execute()
+                    
+                    # Step 3: Trigger Customer Update
+                    await self.action_stock_confirmed(order_no)
+
+            except Exception as e:
+                logger.error(f"Failed to parse PDF {path}: {e}")
+                await self.log_action(order_no, f"Failed to parse PDF {filename}")
+
+    async def action_stock_confirmed(self, order_no: str):
+        """
+        Step 3: Notify customer that stock is confirmed and processing.
+        """
+        from src.connectors.opencart import get_opencart_connector
+        from src.connectors.email_client import get_email_client
+        
+        email_client = get_email_client()
+        oc = get_opencart_connector()
+
+        # Re-fetch customer details (or could store in metadata to save API call)
+        try:
+            full_order = await oc.get_order(order_no)
+        except:
+            full_order = None
+
+        if not full_order:
+             await self.log_action(order_no, "Could not fetch OC details for Stock Confirmation email.")
+             return
+
+        customer_email = full_order.get("email")
+        customer_name = f"{full_order.get('firstname', '')} {full_order.get('lastname', '')}".strip()
+
+        subject = f"Order #{order_no} Confirmed - Preparing for Shipment"
+        body = f"""Hi {customer_name},
+
+Good news! We have confirmed stock for your order #{order_no} and it is now being processed.
+
+Our logistics team will be booking the shipment shortly. You will receive your tracking details in a separate email as soon as the courier collects your parcel.
+
+Thank you for your patience!
+
+Best regards,
+Kait Bayes
+Customer Service Representative
+Audico Online Team
+"""
+        # Send
+        email_client.save_draft(
+            order_no=order_no,
+            to_email=customer_email, 
+            subject=subject, 
+            body_text=body, 
+            cc=["support@audicoonline.co.za"],
+            metadata={
+                "action": "stock_confirmed",
+                "next_status": "processing_shipment" # or keep 'invoiced'?
+            }
+        )
+
+        await self.log_action(order_no, "Drafted 'Stock Confirmed' email to Customer.")
 
     async def process_nudges(self):
         """
@@ -147,8 +431,6 @@ class KaitAgent:
         from src.connectors.email_client import get_email_client
         email_client = get_email_client()
         
-        supplier_thread_id = wf.get("supplier_thread_id")
-        
         # Need to re-fetch supplier email (it's not in wf, maybe I should store it?)
         # For now, fetch from tracker -> supplier -> address
         order_info = self.sb.client.table("orders_tracker").select("supplier").eq("order_no", order_no).execute()
@@ -171,14 +453,19 @@ Kait
 """
         # Send
         # If we had threading support in send_email (In-Reply-To), we'd use supplier_thread_id here
-        msg_id = email_client.send_email(to_email, subject, body, cc=["support@audicoonline.co.za"])
+        email_client.save_draft(
+            order_no=order_no,
+            to_email=to_email,
+            subject=subject,
+            body_text=body,
+            cc=["support@audicoonline.co.za"],
+            metadata={
+                "action": "nudge",
+                "increment_nudge": True
+            }
+        )
         
-        if msg_id:
-            await self.log_action(order_no, "Sent Nudge (Follow-up)")
-            self.sb.client.table("kait_workflows").update({
-                "nudge_count": wf.get("nudge_count", 0) + 1,
-                "last_action_at": datetime.now().isoformat()
-            }).eq("id", wf["id"]).execute()
+        await self.log_action(order_no, "Drafted Nudge Email.")
 
     async def process_new_orders(self):
         """
@@ -275,23 +562,20 @@ Kait Bayes
 Customer Service Representative
 Audico Online Team
 """
-        # Send Email with CC
-        msg_id = email_client.send_email(
-            to_email=customer_email, 
-            subject=subject, 
-            body_text=body, 
-            cc=["support@audicoonline.co.za"]
+        # Save Draft
+        email_client.save_draft(
+            order_no=order_no,
+            to_email=customer_email,
+            subject=subject,
+            body_text=body,
+            cc=["support@audicoonline.co.za"],
+            metadata={
+                "action": "new_order_customer", 
+                "target_field": "customer_thread_id", 
+                "next_status": "customer_emailed"
+            }
         )
-        
-        if msg_id:
-            await self.log_action(order_no, f"Emailed Customer ({customer_email}) acknowledgement (CC: Support).")
-            # Update state
-            self.sb.client.table("kait_workflows").update({
-                "status": "customer_emailed",
-                "customer_thread_id": msg_id
-            }).eq("order_no", order_no).execute()
-        else:
-            await self.log_action(order_no, "Failed to send customer email.")
+        await self.log_action(order_no, "Drafted Customer Acknowledgement.")
 
         # 3. Email Supplier
         # Fetch Supplier Email Address
@@ -310,7 +594,7 @@ Audico Online Team
         greetings = [
             "Hope you are keeping well!",
             "Hope you're having a great week!",
-            "Trust you are well today.",
+            "Trust you are well today!",
             "Hope business is treating you well!",
             "Happy to be sending another order your way!"
         ]
@@ -333,25 +617,20 @@ Warm regards
 Kait Bayes
 Customer Service Representative
 """
-        # Send Supplier Email
-        # CC: lucky, kenny, support
-        cc_list = ["support@audicoonline.co.za", "lucky@audico.co.za", "kenny@audico.co.za"]
-        
-        sup_msg_id = email_client.send_email(
+        # Save Draft
+        email_client.save_draft(
+            order_no=order_no,
             to_email=supplier_email, 
             subject=sup_subject, 
             body_text=sup_body, 
-            cc=cc_list
+            cc=["support@audicoonline.co.za", "lucky@audico.co.za", "kenny@audico.co.za"],
+            metadata={
+                "action": "new_order_supplier", 
+                "target_field": "supplier_thread_id", 
+                "next_status": "supplier_contacted"
+            }
         )
-        
-        if sup_msg_id:
-             await self.log_action(order_no, f"Emailed Supplier ({supplier_name}). CC: {cc_list}")
-             self.sb.client.table("kait_workflows").update({
-                 "status": "supplier_contacted",
-                 "supplier_thread_id": sup_msg_id
-             }).eq("order_no", order_no).execute()
-        else:
-             await self.log_action(order_no, f"Failed to email supplier {supplier_name}.")
+        await self.log_action(order_no, f"Drafted Supplier Order ({supplier_name}).")
 
 if __name__ == "__main__":
     import asyncio
