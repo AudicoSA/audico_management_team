@@ -138,6 +138,9 @@ app.include_router(products_router)
 app.include_router(scheduler_router)
 app.include_router(alignment_router)
 
+from src.api.chat import router as chat_router
+app.include_router(chat_router)
+
 
 
 @app.get("/")

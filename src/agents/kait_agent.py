@@ -272,6 +272,17 @@ Output JSON:
             
             # Check for Invoice / Attachments
             attachments = msg.get("attachments", [])
+            
+            # --- NEW: Process Specials via Email ---
+            # Command: Email subject contains "Specials", "Promo", "Deals" OR "Load Specials"
+            # And has attachment.
+            clean_subject = subject.lower()
+            if "specials" in clean_subject or "promo" in clean_subject or "deals" in clean_subject:
+                if attachments:
+                    await self.process_email_specials(msg, attachments, sender)
+                    continue 
+            # ---------------------------------------
+
             if matched_wf and attachments:
                 # We have a matching workflow and attachments
                 await self.process_invoice(matched_wf, attachments, sender)
@@ -284,6 +295,44 @@ Output JSON:
                 
                 if any(kw in body_lower for kw in stock_keywords):
                      await self.process_stock_status(matched_wf, body_lower, sender)
+
+    async def process_email_specials(self, msg: Dict[str, Any], attachments: List[Dict[str, Any]], sender: str):
+        """
+        Handle incoming specials flyer via email.
+        """
+        from src.agents.specials_agent import get_specials_agent
+        agent = get_specials_agent()
+        
+        # Heuristic: Sender name/email is likely the supplier
+        # In prod, we'd map sender email -> supplier in DB.
+        # For now, pass the sender string.
+        
+        # Also check body for instructions?
+        print(f"Detected Specials Email from {sender}. Processing attachments...")
+        
+        for att in attachments:
+            path = att["path"]
+            filename = att["filename"]
+            
+            # Only process images for now (since we used Vision).
+            # If PDF, we need to convert?
+            # SpecialsAgent 'ingest_flyer' handles basic file ingestion.
+            # Ideally we'd support PDF -> Image conversion there. 
+            # If the user sends a PDF, the CLI/Agent might complain.
+            # But let's try.
+            
+            result = await agent.ingest_flyer(path, supplier_name=sender)
+            
+            if result.get("status") == "success":
+                await self.log_system_event(f"Ingested Specials from {sender}: {filename} ({result.get('deals_count')} deals)")
+            else:
+                await self.log_system_event(f"Failed to ingest specials from {sender}: {filename} - {result.get('message')}")
+
+    async def log_system_event(self, message: str):
+        """Log a general system event (not tied to specific order)."""
+        # We don't have a general log table yet, so just print/logger
+        logger.info(message)
+        print(f"[SYSTEM] {message}")
 
     async def process_stock_status(self, wf: Dict[str, Any], body: str, sender: str):
         """

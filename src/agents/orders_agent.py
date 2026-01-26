@@ -430,6 +430,62 @@ class OrdersLogisticsAgent:
                         updates=f"Contact: {order.get('email')} | {order.get('telephone')}", # Move contact info here
                         last_modified_by="system_sync"
                     )
+
+                    # --- NEW: Product Knowledge / Supplier Assignment ---
+                    # Logic: Look up products in DB to find their registered supplier.
+                    # This prevents Kait from "guessing".
+                    try:
+                        # Parse products from summary or fetch details if needed. 
+                        # 'order' object from 'get_recent_orders' has 'products_summary' string, but not detailed list.
+                        # We might need to fetch full order details if we want exact SKUs, OR we can rely on what we have.
+                        # 'get_recent_orders' query in opencart.py uses GROUP_CONCAT. It doesn't return SKUs list.
+                        # So we should fetch full order details to get SKUs for accurate lookup.
+                        
+                        full_order_details = await self.opencart.get_order(order_id)
+                        if full_order_details and full_order_details.get('products'):
+                            # Collect potential suppliers
+                            detected_suppliers = []
+                            
+                            for prod in full_order_details['products']:
+                                model = prod.get('model')
+                                sku = prod.get('sku') # Note: get_order might not return SKU in product list? Check opencart.py get_order query.
+                                # opencart.py get_order query: SELECT name, model, quantity, price, total FROM order_product
+                                # It returns 'model', but not 'sku'. usually model IS sku in OpenCart, but let's use model.
+                                
+                                search_ref = sku if sku else model
+                                if search_ref:
+                                    # Look up in Supabase Products
+                                    # We match on 'sku' column in DB (which corresponds to model/sku)
+                                    p_res = self.supabase.client.table("products").select("supplier_id").eq("sku", search_ref).execute()
+                                    
+                                    if p_res.data:
+                                        sup_id = p_res.data[0].get('supplier_id')
+                                        if sup_id:
+                                            # Resolve Name
+                                            s_res = self.supabase.client.table("suppliers").select("name").eq("id", sup_id).execute()
+                                            if s_res.data:
+                                                detected_suppliers.append(s_res.data[0]['name'])
+                            
+                            if detected_suppliers:
+                                # Logic: Pick the most common one, or just the first.
+                                # For now, simple Majority Vote
+                                from collections import Counter
+                                most_common = Counter(detected_suppliers).most_common(1)
+                                if most_common:
+                                    best_supplier = most_common[0][0]
+                                    
+                                    # Update orders_tracker with the Hard Data supplier
+                                    await self.supabase.upsert_order_tracker(
+                                        order_no=order_id,
+                                        supplier=best_supplier,
+                                        last_modified_by="system_sync_enrichment"
+                                    )
+                                    logger.info("assigned_supplier_from_data", order_id=order_id, supplier=best_supplier)
+                                    
+                    except Exception as e:
+                        logger.warning("failed_to_assign_supplier", order_id=order_id, error=str(e))
+                    # ----------------------------------------------------
+
                     synced_count += 1
                     
                 except Exception as e:
