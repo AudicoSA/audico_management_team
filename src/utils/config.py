@@ -45,6 +45,9 @@ class Config(BaseSettings):
     gmail_client_secret: Optional[str] = None  # LOADED FROM ENV or File
     gmail_refresh_token: Optional[str] = None
 
+    # Kait Email Configuration (IMAP/SMTP)
+    kait_email_password: Optional[str] = None
+
     # Supabase Configuration
     supabase_url: str
     supabase_service_role_key: str
