@@ -26,13 +26,18 @@ class EmailClient:
         if not self.password:
             logger.warning("kait_email_password_missing")
 
-    def send_email(self, to_email: str, subject: str, body_text: str, body_html: Optional[str] = None, cc: Optional[List[str]] = None) -> bool:
-        """Send an email via SMTP (SSL)."""
+    def send_email(self, to_email: str, subject: str, body_text: str, body_html: Optional[str] = None, cc: Optional[List[str]] = None) -> Optional[str]:
+        """Send an email via SMTP (SSL). Returns Message-ID if successful, None otherwise."""
+        from email.utils import making_msgid
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = self.email
             msg["To"] = to_email
+            
+            # Generate Message-ID
+            msg_id = make_msgid(domain="audicoonline.co.za")
+            msg["Message-ID"] = msg_id
             
             recipients = [to_email]
             if cc:
@@ -50,11 +55,11 @@ class EmailClient:
                 server.login(self.email, self.password)
                 server.sendmail(self.email, recipients, msg.as_string())
             
-            logger.info(f"Email sent to {to_email} (CC: {cc})")
-            return True
+            logger.info(f"Email sent to {to_email} (CC: {cc}) ID: {msg_id}")
+            return msg_id
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
-            return False
+            return None
 
     def fetch_unread_messages(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Fetch unread emails from Inbox."""
@@ -80,6 +85,8 @@ class EmailClient:
                             subject = subject.decode(encoding if encoding else "utf-8")
                         
                         from_ = msg.get("From")
+                        in_reply_to = msg.get("In-Reply-To")
+                        references = msg.get("References")
                         
                         body = ""
                         if msg.is_multipart():
@@ -94,7 +101,9 @@ class EmailClient:
                             "id": e_id.decode(), # IMAP UID
                             "subject": subject,
                             "from": from_,
-                            "body": body
+                            "body": body,
+                            "in_reply_to": in_reply_to,
+                            "references": references
                         })
             
             mail.close()

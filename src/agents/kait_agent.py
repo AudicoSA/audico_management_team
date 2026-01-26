@@ -70,9 +70,115 @@ class KaitAgent:
         # 1. Process New Orders (Trigger: Assigned to Supplier but not in Workflow)
         await self.process_new_orders()
         
-        # 2. Nudge Check (Wait > 4h)
-        # (Implementation Todo)
-        pass
+        # 2. Check for Replies (IMAP Scan)
+        await self.check_for_replies()
+
+        # 3. Nudge Check (Wait > 4h)
+        await self.process_nudges()
+
+    async def check_for_replies(self):
+        """
+        Scan inbox for replies to our threads.
+        """
+        from src.connectors.email_client import get_email_client
+        email_client = get_email_client()
+        
+        # 1. Fetch unread emails
+        messages = email_client.fetch_unread_messages(limit=20)
+        
+        for msg in messages:
+            subject = msg.get("subject", "")
+            sender = msg.get("from", "")
+            in_reply_to = msg.get("in_reply_to")
+            references = msg.get("references")
+            
+            # Strategy 1: Thread ID Match
+            # We check if 'in_reply_to' matches any known thread_id in our DB
+            matched_wf = None
+            if in_reply_to:
+                # Check supplier threads
+                dataset = self.sb.client.table("kait_workflows").select("*").eq("supplier_thread_id", in_reply_to).execute()
+                if dataset.data:
+                    matched_wf = dataset.data[0]
+                    await self.log_action(matched_wf["order_no"], f"Received Supplier Reply from {sender}")
+                    self.sb.client.table("kait_workflows").update({"status": "supplier_replied"}).eq("id", matched_wf["id"]).execute()
+                
+                # Check customer threads
+                if not matched_wf:
+                    dataset = self.sb.client.table("kait_workflows").select("*").eq("customer_thread_id", in_reply_to).execute()
+                    if dataset.data:
+                        matched_wf = dataset.data[0]
+                        await self.log_action(matched_wf["order_no"], f"Received Customer Reply from {sender}")
+
+            # Strategy 2: Subject Regex (Fallback)
+            if not matched_wf:
+                import re
+                match = re.search(r"Order #?(\d+)", subject, re.IGNORECASE)
+                if match:
+                    order_no = match.group(1)
+                    await self.log_action(order_no, f"Received email with matching Subject from {sender}: {subject}")
+
+    async def process_nudges(self):
+        """
+        Check for workflows stuck in 'supplier_contacted' for > 4 hours.
+        """
+        # Get stale workflows
+        time_limit = datetime.now() - timedelta(hours=4)
+        
+        response = self.sb.client.table("kait_workflows") \
+            .select("*") \
+            .eq("status", "supplier_contacted") \
+            .lt("last_action_at", time_limit.isoformat()) \
+            .execute()
+
+        for wf in response.data:
+            order_no = wf["order_no"]
+            nudge_count = wf.get("nudge_count", 0)
+            
+            if nudge_count >= 1:
+                # Don't nudge more than once for now
+                continue
+                
+            print(f"[{order_no}] Order waiting for reply > 4h. Sending nudge...")
+            await self.action_send_nudge(order_no, wf)
+
+    async def action_send_nudge(self, order_no: str, wf: Dict[str, Any]):
+        """Send a polite follow-up email."""
+        from src.connectors.email_client import get_email_client
+        email_client = get_email_client()
+        
+        supplier_thread_id = wf.get("supplier_thread_id")
+        
+        # Need to re-fetch supplier email (it's not in wf, maybe I should store it?)
+        # For now, fetch from tracker -> supplier -> address
+        order_info = self.sb.client.table("orders_tracker").select("supplier").eq("order_no", order_no).execute()
+        if not order_info.data: return
+        
+        supplier_name = order_info.data[0]["supplier"]
+        supplier_info = await self.sb.get_supplier_address(supplier_name)
+        if not supplier_info: return
+        
+        to_email = supplier_info["contact_email"]
+        
+        subject = f"Follow up: Order {order_no}"
+        body = f"""Hi there,
+        
+I'm just following up on the order below ({order_no}).
+Could you please confirm receipt and stock availability?
+
+Kind regards,
+Kait
+"""
+        # Send
+        # If we had threading support in send_email (In-Reply-To), we'd use supplier_thread_id here
+        msg_id = email_client.send_email(to_email, subject, body, cc=["support@audicoonline.co.za"])
+        
+        if msg_id:
+            await self.log_action(order_no, "Sent Nudge (Follow-up)")
+            self.sb.client.table("kait_workflows").update({
+                "nudge_count": wf.get("nudge_count", 0) + 1,
+                "last_action_at": datetime.now().isoformat()
+            }).eq("id", wf["id"]).execute()
 
     async def process_new_orders(self):
         """
@@ -140,6 +246,16 @@ class KaitAgent:
             await self.log_action(order_no, "No customer email found.")
             return
 
+        # Build Product List
+        products_text = ""
+        for product in full_order.get("products", []):
+            qty = product.get("quantity", 0)
+            name = product.get("name", "Unknown Item")
+            opts = ""
+            if product.get("option"):
+                opts = " - " + ", ".join([f"{o['name']}: {o['value']}" for o in product['option']])
+            products_text += f"{qty}x {name}{opts}\n"
+
         # 2. Email Customer (Acknowledgement)
         # PRIVACY FIX: Never mention supplier name to customer
         # CC support@audicoonline.co.za
@@ -147,6 +263,9 @@ class KaitAgent:
         body = f"""Hi {customer_name},
 
 Thanks for your order #{order_no}!
+
+We have received your order for:
+{products_text}
 
 We've assigned your order to our logistics partner for fulfillment.
 You will receive another notification with your Waybill/Tracking number as soon as it's collected.
@@ -157,17 +276,20 @@ Customer Service Representative
 Audico Online Team
 """
         # Send Email with CC
-        success = email_client.send_email(
+        msg_id = email_client.send_email(
             to_email=customer_email, 
             subject=subject, 
             body_text=body, 
             cc=["support@audicoonline.co.za"]
         )
         
-        if success:
+        if msg_id:
             await self.log_action(order_no, f"Emailed Customer ({customer_email}) acknowledgement (CC: Support).")
             # Update state
-            self.sb.client.table("kait_workflows").update({"status": "customer_emailed"}).eq("order_no", order_no).execute()
+            self.sb.client.table("kait_workflows").update({
+                "status": "customer_emailed",
+                "customer_thread_id": msg_id
+            }).eq("order_no", order_no).execute()
         else:
             await self.log_action(order_no, "Failed to send customer email.")
 
@@ -194,16 +316,6 @@ Audico Online Team
         ]
         greeting = random.choice(greetings)
 
-        # Build Product List
-        products_text = ""
-        for product in full_order.get("products", []):
-            qty = product.get("quantity", 0)
-            name = product.get("name", "Unknown Item")
-            opts = ""
-            if product.get("option"):
-                opts = " - " + ", ".join([f"{o['name']}: {o['value']}" for o in product['option']])
-            products_text += f"{qty}x {name}{opts}\n"
-
         # Compose Supplier Email
         sup_subject = f"{order_no}"
         sup_body = f"""Hi {supplier_contact_name}
@@ -225,16 +337,19 @@ Customer Service Representative
         # CC: lucky, kenny, support
         cc_list = ["support@audicoonline.co.za", "lucky@audico.co.za", "kenny@audico.co.za"]
         
-        sup_success = email_client.send_email(
+        sup_msg_id = email_client.send_email(
             to_email=supplier_email, 
             subject=sup_subject, 
             body_text=sup_body, 
             cc=cc_list
         )
         
-        if sup_success:
+        if sup_msg_id:
              await self.log_action(order_no, f"Emailed Supplier ({supplier_name}). CC: {cc_list}")
-             self.sb.client.table("kait_workflows").update({"status": "supplier_contacted"}).eq("order_no", order_no).execute()
+             self.sb.client.table("kait_workflows").update({
+                 "status": "supplier_contacted",
+                 "supplier_thread_id": sup_msg_id
+             }).eq("order_no", order_no).execute()
         else:
              await self.log_action(order_no, f"Failed to email supplier {supplier_name}.")
 
