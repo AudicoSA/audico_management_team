@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { supabase } from '@/lib/supabase'
 import {
     Bot,
     Mail,
@@ -24,7 +24,6 @@ interface Workflow {
 }
 
 export default function KaitDashboard() {
-    const supabase = createClientComponentClient()
     const [workflows, setWorkflows] = useState<Workflow[]>([])
     const [loading, setLoading] = useState(true)
 
