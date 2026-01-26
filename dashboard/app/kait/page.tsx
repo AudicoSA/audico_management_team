@@ -35,7 +35,7 @@ export default function KaitDashboard() {
     }, [])
 
     const fetchWorkflows = async () => {
-        const { data, _ } = await supabase
+        const { data, error } = await supabase
             .from('kait_workflows')
             .select('*')
             .order('last_action_at', { ascending: false })
