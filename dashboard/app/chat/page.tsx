@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 
 interface Message {
     role: "user" | "assistant";
-    content: str;
+    content: string;
 }
 
 export default function ChatPage() {
@@ -85,8 +85,8 @@ export default function ChatPage() {
                         <div
                             key={index}
                             className={`p-4 rounded-xl max-w-[80%] whitespace-pre-wrap ${msg.role === "user"
-                                    ? "bg-blue-600 text-white self-end rounded-tr-none"
-                                    : "bg-gray-100 text-gray-800 self-start rounded-tl-none border border-gray-200"
+                                ? "bg-blue-600 text-white self-end rounded-tr-none"
+                                : "bg-gray-100 text-gray-800 self-start rounded-tl-none border border-gray-200"
                                 }`}
                         >
                             {msg.content}
