@@ -57,7 +57,7 @@ export default function KaitDashboard() {
             .from('kait_email_drafts')
             .select('*')
             .eq('status', 'draft')
-            .order('created_at', { ascending: true })
+            .order('created_at', { ascending: false })
 
         if (data) setDrafts(data)
     }
