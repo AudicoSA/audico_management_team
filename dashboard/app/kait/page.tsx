@@ -71,6 +71,7 @@ export default function KaitDashboard() {
     }
 
     const [rejectingId, setRejectingId] = useState<string | null>(null)
+    const [expandedId, setExpandedId] = useState<string | null>(null)
     const [feedbackText, setFeedbackText] = useState('')
 
     const confirmReject = async (id: string) => {
@@ -237,14 +238,29 @@ export default function KaitDashboard() {
                                             </div>
                                         ) : (
                                             <>
-                                                <div className="text-xs text-gray-400 italic mb-3 line-clamp-3 bg-black/20 p-2 rounded whitespace-pre-wrap">
+                                                {/* Draft Content with Expand Toggle */}
+                                                <div
+                                                    className={`text-xs text-gray-400 italic mb-2 bg-black/20 p-2 rounded whitespace-pre-wrap transition-all cursor-pointer ${expandedId === draft.id ? '' : 'line-clamp-3'
+                                                        }`}
+                                                    onClick={() => setExpandedId(expandedId === draft.id ? null : draft.id)}
+                                                    title="Click to expand/collapse"
+                                                >
                                                     {draft.draft_content || "Content preview unavailable"}
                                                 </div>
-                                                <div className="flex gap-2">
+
+                                                {/* Controls */}
+                                                <div className="flex gap-2 items-center">
+                                                    <button
+                                                        onClick={() => setExpandedId(expandedId === draft.id ? null : draft.id)}
+                                                        className="text-[10px] text-gray-500 hover:text-white underline mr-auto"
+                                                    >
+                                                        {expandedId === draft.id ? 'Show Less' : 'Read More'}
+                                                    </button>
+
                                                     <button
                                                         onClick={() => approveDraft(draft.id)}
                                                         className="flex-1 py-1.5 px-3 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors">
-                                                        <Mail className="w-3 h-3" /> Approve & Send
+                                                        <Mail className="w-3 h-3" /> Send
                                                     </button>
 
                                                     {/* Reject Button */}
