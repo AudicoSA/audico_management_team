@@ -28,6 +28,12 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
         country_code: 'ZA'
     })
 
+    const [contactInfo, setContactInfo] = useState({
+        name: '',
+        email: '',
+        phone: ''
+    })
+
     useEffect(() => {
         if (isOpen) {
             setSupplierInvoice(initialSupplierInvoice || '')
@@ -75,6 +81,11 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                         code: match.code,
                         country_code: match.country_code
                     })
+                    setContactInfo({
+                        name: match.contact_name || '',
+                        email: match.contact_email || '',
+                        phone: match.contact_phone || ''
+                    })
                     setSaveAsNew(false)
                 }
             }
@@ -93,6 +104,11 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                 code: '',
                 country_code: 'ZA'
             })
+            setContactInfo({
+                name: '',
+                email: '',
+                phone: ''
+            })
             return
         }
 
@@ -105,6 +121,11 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                 city: supplier.city,
                 code: supplier.code,
                 country_code: supplier.country_code
+            })
+            setContactInfo({
+                name: supplier.contact_name || '',
+                email: supplier.contact_email || '',
+                phone: supplier.contact_phone || ''
             })
             setSaveAsNew(false)
         }
@@ -122,7 +143,10 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                 local_area: address.local_area,
                 city: address.city,
                 code: address.code,
-                country_code: address.country_code
+                country_code: address.country_code,
+                contact_name: contactInfo.name,
+                contact_email: contactInfo.email,
+                contact_phone: contactInfo.phone
             })
 
             if (error) {
@@ -175,6 +199,40 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
                         </div>
 
                         <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider pt-2">Collection Address (From)</h3>
+
+                        {/* Contact Information */}
+                        <div className="grid grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Contact Name</label>
+                                <input
+                                    type="text"
+                                    value={contactInfo.name}
+                                    onChange={e => setContactInfo({ ...contactInfo, name: e.target.value })}
+                                    placeholder="John Doe"
+                                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Email</label>
+                                <input
+                                    type="email"
+                                    value={contactInfo.email}
+                                    onChange={e => setContactInfo({ ...contactInfo, email: e.target.value })}
+                                    placeholder="contact@supplier.com"
+                                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Telephone</label>
+                                <input
+                                    type="tel"
+                                    value={contactInfo.phone}
+                                    onChange={e => setContactInfo({ ...contactInfo, phone: e.target.value })}
+                                    placeholder="011 234 5678"
+                                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+                                />
+                            </div>
+                        </div>
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Company / Supplier</label>
