@@ -205,7 +205,7 @@ export default function KaitDashboard() {
                                 {drafts.map(draft => (
                                     <div key={draft.id} className="border border-orange-500/30 bg-orange-500/5 rounded-lg p-3 relative group">
                                         <div className="flex justify-between items-start mb-2">
-                                            <span className="text-xs font-bold text-orange-300">Order #{draft.order_no}</span>
+                                            <span className="text-xs font-bold text-orange-300">Order #{draft.payload?.order_id || 'Unknown'}</span>
                                             <span className="text-[10px] text-gray-500">{new Date(draft.created_at).toLocaleTimeString()}</span>
                                         </div>
                                         <div className="text-xs text-gray-300 font-semibold mb-1">To: {draft.to_email}</div>
@@ -237,8 +237,8 @@ export default function KaitDashboard() {
                                             </div>
                                         ) : (
                                             <>
-                                                <div className="text-xs text-gray-400 italic mb-3 line-clamp-3 bg-black/20 p-2 rounded">
-                                                    {draft.body_text}
+                                                <div className="text-xs text-gray-400 italic mb-3 line-clamp-3 bg-black/20 p-2 rounded whitespace-pre-wrap">
+                                                    {draft.draft_content || "Content preview unavailable"}
                                                 </div>
                                                 <div className="flex gap-2">
                                                     <button
