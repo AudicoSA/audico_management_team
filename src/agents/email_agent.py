@@ -686,6 +686,7 @@ Extract invoice details."""
                 draft_content=body,
                 handled_by_agent="OrdersLogisticsAgent"
             )
+            # Draft status set to 'draft' for dashboard visibility
             
             logger.info("client_welcome_draft_created", order_id=order_id, draft_id=draft_id)
             
