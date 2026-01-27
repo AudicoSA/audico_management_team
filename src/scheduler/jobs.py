@@ -9,12 +9,15 @@ from src.utils.logging import AgentLogger
 from src.scheduler.universal_sync import UniversalProductSyncer
 from src.jobs.sync_all_suppliers import MCPSyncOrchestrator
 
+from src.agents.kait_agent import KaitAgent
+
 logger = AgentLogger("APSScheduler")
 
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
 scanner_service = SupplierScanner()
 universal_syncer = UniversalProductSyncer()
+kait_agent = KaitAgent()
 
 async def run_scanner_job(supplier_name: str):
     """Wrapper to run scanner from job."""
@@ -23,6 +26,14 @@ async def run_scanner_job(supplier_name: str):
         await scanner_service.run_scan(supplier_name)
     except Exception as e:
         logger.error("scheduled_job_failed", supplier=supplier_name, error=str(e))
+
+async def run_kait_cycle_job():
+    """Wrapper to run Kait's main cycle (Outbox, Replies, etc)."""
+    # logger.info("kait_cycle_job_started")
+    try:
+        await kait_agent.run_cycle()
+    except Exception as e:
+        logger.error("kait_cycle_job_failed", error=str(e))
 
 async def run_queue_processor_job():
     """Wrapper to run queue processor."""
@@ -73,6 +84,13 @@ def setup_scheduler():
         replace_existing=True
     )
     
+    # Kait Cycle: Every minute
+    scheduler.add_job(
+        run_kait_cycle_job,
+        CronTrigger(minute="*"),
+        id="kait_agent_lifecycle",
+        replace_existing=True
+    )
     
     # Queue Processor: Every minute
     scheduler.add_job(
