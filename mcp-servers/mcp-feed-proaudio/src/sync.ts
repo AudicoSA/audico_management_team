@@ -27,7 +27,7 @@ async function main() {
     }
   });
 
-  logger.info('🚀 Nology MCP Server - Sync Tool');
+  logger.info('🚀 ProAudio MCP Server - Sync Tool');
   logger.info('================================\n');
 
   if (options.dryRun) {

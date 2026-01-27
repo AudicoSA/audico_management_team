@@ -1,6 +1,6 @@
 """Email Management Agent for handling customer and supplier emails."""
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from src.connectors.gmail import GmailConnector, ParsedEmail, get_gmail_connector
 from src.connectors.opencart import OpenCartConnector, get_opencart_connector
@@ -603,6 +603,214 @@ Extract invoice details."""
         except Exception as e:
             logger.error("email_send_failed", email_id=email_id, error=str(e))
             return {"status": "error", "email_id": email_id, "error": str(e)}
+
+    async def draft_client_welcome_email(
+        self,
+        order_details: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Draft a welcome email to the client for a new order.
+        
+        Args:
+            order_details: Order info including customer email, products, etc.
+            
+        Returns:
+            Dict with draft_id and status
+        """
+        try:
+            order_id = order_details.get("order_id", "Unknown")
+            customer_email = order_details.get("email")
+            firstname = order_details.get("firstname", "Customer")
+            
+            if not customer_email:
+                return {"status": "error", "error": "No customer email found"}
+
+            # 1. Construct Email Body
+            lines = [
+                f"Hi {firstname},",
+                "",
+                f"Thank you for your order #{order_id}!",
+                "",
+                "We have received your order and it has been assigned to one of our sales agents for processing.",
+                "",
+                "**Order Summary:**"
+            ]
+            
+            products = order_details.get("products", [])
+            for p in products:
+                qty = p.get('quantity', 1)
+                name = p.get('name', 'Unknown Product')
+                lines.append(f"- {qty}x {name}")
+                
+            lines.extend([
+                "",
+                "We will be in touch shortly with an update regarding stock availability and delivery timelines.",
+                "",
+                "Best regards,",
+                "Audico Team",
+                "sales@audico.co.za"
+            ])
+            
+            body = "\n".join(lines)
+            subject = f"Order Received - Ref #{order_id}"
+            
+            # 2. Create Draft in Gmail
+            draft_id = self.gmail.create_draft(
+                to_email=customer_email,
+                subject=subject,
+                body=body
+            )
+            
+            # 3. Log to Supabase
+            pseudo_msg_id = f"draft_welcome_{order_id}_{int(datetime.utcnow().timestamp())}"
+            
+            await self.supabase.create_email_log(
+                gmail_message_id=pseudo_msg_id,
+                gmail_thread_id="",
+                from_email="sales@audico.co.za",
+                to_email=customer_email,
+                subject=subject,
+                category="CLIENT_WELCOME_DRAFT",
+                classification_confidence=1.0,
+                payload={
+                    "order_id": order_id,
+                    "draft_id": draft_id,
+                    "type": "client_welcome",
+                    "generated_by": "OrdersLogisticsAgent"
+                }
+            )
+            
+            await self.supabase.update_email_log(
+                gmail_message_id=pseudo_msg_id,
+                status="DRAFTED",
+                draft_content=body,
+                handled_by_agent="OrdersLogisticsAgent"
+            )
+            
+            logger.info("client_welcome_draft_created", order_id=order_id, draft_id=draft_id)
+            
+            return {
+                "status": "success",
+                "draft_id": draft_id,
+                "to_email": customer_email
+            }
+            
+        except Exception as e:
+            logger.error("draft_client_welcome_failed", order_id=order_details.get("order_id"), error=str(e))
+            return {"status": "error", "error": str(e)}
+
+    async def draft_supplier_order_email(
+        self, 
+        order_details: Dict[str, Any], 
+        supplier_name: str,
+        products: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Draft a supplier order email.
+        
+        Args:
+            order_details: Order info (id, date, reference, etc.)
+            supplier_name: Name of the supplier
+            products: List of products strictly for this supplier
+            
+        Returns:
+            Dict with draft_id and status
+        """
+        try:
+            order_id = order_details.get("order_id", "Unknown")
+            
+            # 1. Resolve Supplier Email
+            # Try to get supplier contact info from DB
+            supplier_email = ""
+            try:
+                # Case-insensitive search for supplier
+                sup_res = self.supabase.client.table("supplier_addresses").select("contact_email").ilike("name", supplier_name).limit(1).execute()
+                if sup_res.data and sup_res.data[0].get("contact_email"):
+                    supplier_email = sup_res.data[0]["contact_email"]
+            except Exception as e:
+                logger.warning("failed_to_resolve_supplier_email", supplier=supplier_name, error=str(e))
+                
+            if not supplier_email:
+                # Fallback email or mark as needing manual entry
+                supplier_email = "INSERT_SUPPLIER_EMAIL_HERE"
+
+            # 2. Construct Email Body
+            # Professional template
+            lines = [
+                f"Dear {supplier_name} Team,",
+                "",
+                "Please could you send us a pro-forma invoice/quote for the following items:",
+                ""
+            ]
+            
+            for p in products:
+                # Format: 2x Product Name (Model/SKU)
+                qty = p.get('quantity', 1)
+                name = p.get('name', 'Unknown Product')
+                model = p.get('model') or p.get('sku') or ''
+                lines.append(f"- {qty}x {name} ({model})")
+                
+            lines.extend([
+                "",
+                f"Reference: Order #{order_id}",
+                "",
+                "Please include our VAT number (4340266785) on the invoice.",
+                "",
+                "Kind regards,",
+                "Audico Logistics Team",
+                "logistics@audico.co.za"
+            ])
+            
+            body = "\n".join(lines)
+            subject = f"Order Request: {supplier_name} - Ref #{order_id}"
+            
+            # 3. Create Draft in Gmail
+            draft_id = self.gmail.create_draft(
+                to_email=supplier_email,
+                subject=subject,
+                body=body
+            )
+            
+            # 4. Log to Supabase (so we don't duplicate)
+            # We'll create a log entry even though it didn't come FROM an email
+            # We use a unique message ID format to avoid collisions
+            pseudo_msg_id = f"draft_gen_{order_id}_{int(datetime.utcnow().timestamp())}"
+            
+            await self.supabase.create_email_log(
+                gmail_message_id=pseudo_msg_id,
+                gmail_thread_id="",
+                from_email="logistics@audico.co.za",
+                to_email=supplier_email,
+                subject=subject,
+                category="SUPPLIER_ORDER_DRAFT",
+                classification_confidence=1.0,
+                payload={
+                    "order_id": order_id,
+                    "draft_id": draft_id,
+                    "supplier_name": supplier_name,
+                    "products": products,
+                    "generated_by": "OrdersLogisticsAgent"
+                }
+            )
+            
+            # Mark as DRAFTED immediately
+            await self.supabase.update_email_log(
+                gmail_message_id=pseudo_msg_id,
+                status="DRAFTED",
+                draft_content=body,
+                handled_by_agent="OrdersLogisticsAgent"
+            )
+            
+            logger.info("supplier_draft_created", order_id=order_id, supplier=supplier_name, draft_id=draft_id)
+            
+            return {
+                "status": "success",
+                "draft_id": draft_id,
+                "supplier_name": supplier_name,
+                "to_email": supplier_email
+            }
+            
+        except Exception as e:
+            logger.error("draft_supplier_order_failed", order_id=order_details.get("order_id"), error=str(e))
+            return {"status": "error", "error": str(e)}
 
 
 # Global instance

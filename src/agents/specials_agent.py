@@ -247,21 +247,25 @@ class SpecialsAgent:
                 flyer_title = flyer.get("title", "").lower()
                 query_lower = query.lower()
                 
-                # 1. Check if Query matches the Flyer Title (e.g. "Logitech Specials")
-                if query_lower in flyer_title:
-                   # Return top 10 deals from this matching flyer
-                   hits.append(f"--- Found in '{flyer.get('title')}' ---")
-                   for d in deals[:10]:
-                       hits.append(f"- {d.get('product_name')} @ {d.get('price')}")
-                   if len(deals) > 10:
-                       hits.append(f"... and {len(deals)-10} more.")
-                   continue # Skip individual item check if whole flyer matches
+                # Broad Match: Check if query exists ANYWHERE in the flyer (Title or ANY deal content)
+                deals_str = json.dumps(deals).lower()
                 
-                # 2. Check individual items
-                for d in deals:
-                    p_name = d.get("product_name", "").lower()
-                    if query_lower in p_name:
-                        hits.append(f"- {d.get('product_name')} @ {d.get('price')} (Source: {flyer.get('title')})")
+                if query_lower in flyer_title or query_lower in deals_str:
+                   # Found a matching flyer/batch. Now find specific items or return batch summary.
+                   hits.append(f"--- Found in '{flyer.get('title')}' ---")
+                   
+                   match_count = 0
+                   for d in deals:
+                       # Construct a full string representation of the deal to search against
+                       d_str = f"{d.get('product_name')} {d.get('sku')} {d.get('description', '')}".lower()
+                       
+                       # If query is in this specific deal OR was in the title (implies all deals are relevant)
+                       if query_lower in d_str or query_lower in flyer_title:
+                           hits.append(f"- {d.get('product_name')} @ {d.get('price')}")
+                           match_count += 1
+                           if match_count >= 10:
+                               hits.append(f"... and more.")
+                               break
             
             if not hits:
                 return "No specials found matching that query."

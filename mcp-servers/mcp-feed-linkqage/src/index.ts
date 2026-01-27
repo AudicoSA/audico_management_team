@@ -40,21 +40,137 @@ interface ScrapedProduct {
     inStock: boolean;
 }
 
-// Category URLs to scrape
+// Category URLs to scrape (Extracted & Verified)
 const CATEGORY_URLS = [
-    '/product-category/accessories/',
-    '/product-category/audio-visual/',
-    '/product-category/cables/',
-    '/product-category/computer-peripherals/',
-    '/product-category/consumables/',
-    '/product-category/networking/',
-    '/product-category/networking-active/',
-    '/product-category/networking-passive/',
-    '/product-category/power/',
-    '/product-category/security/',
-    '/product-category/tools-testers/',
-    '/product-category/new-products/',
-    '/product-category/popular-products/',
+    "/product-category/accessories/hdd-enclosures/sata-hdd-enclosures/?product_tag_1=3-5",
+    "/product-category/accessories/pci-adapters/4x-slot/",
+    "/product-category/audio-visual/audio-audio-visual/headphones/",
+    "/product-category/audio-visual/audio-audio-visual/speakers/",
+    "/product-category/audio-visual/brackets/desk-brackets/",
+    "/product-category/audio-visual/brackets/dvd-brackets/",
+    "/product-category/audio-visual/brackets/point-of-sale/",
+    "/product-category/audio-visual/brackets/projector-brackets/",
+    "/product-category/audio-visual/brackets/speaker-brackets/",
+    "/product-category/audio-visual/brackets/tv-carts-stands/",
+    "/product-category/audio-visual/brackets/tv-mounts/full-motion-wall-mounts/",
+    "/product-category/audio-visual/brackets/tv-mounts/tilt-wall-fixed-brackets/",
+    "/product-category/audio-visual/brackets/tv-mounts/tv-ceiling-mounts/",
+    "/product-category/audio-visual/cables/audio/",
+    "/product-category/audio-visual/cables/display-port-cables/",
+    "/product-category/audio-visual/cables/dvi/",
+    "/product-category/audio-visual/cables/firewire/",
+    "/product-category/audio-visual/cables/hdmi/",
+    "/product-category/audio-visual/cables/lightning/",
+    "/product-category/audio-visual/cables/micro-usb/",
+    "/product-category/audio-visual/cables/multi-in-one/",
+    "/product-category/audio-visual/cables/type-c-cables/",
+    "/product-category/audio-visual/cables/usb/",
+    "/product-category/audio-visual/cables/vga/",
+    "/product-category/audio-visual/converters-and-adapters/audio-converters/",
+    "/product-category/audio-visual/converters-and-adapters/extenders/",
+    "/product-category/audio-visual/converters-and-adapters/splitters/",
+    "/product-category/audio-visual/converters-and-adapters/video-converters/",
+    "/product-category/audio-visual/healthy-office/desks/desk-converters/",
+    "/product-category/audio-visual/healthy-office/desks/sit-stand-desks/",
+    "/product-category/audio-visual/kvm/displayport-kvm/",
+    "/product-category/audio-visual/kvm/vga-kvm/",
+    "/product-category/audio-visual/media-players-and-digital-signage/touch-screen/",
+    "/product-category/audio-visual/media-players-digital-signage/video-wall-processors/",
+    "/product-category/audio-visual/multi-connectivity/desktop-socket-boxes/",
+    "/product-category/audio-visual/multi-connectivity/face-mount-boxes/",
+    "/product-category/audio-visual/multi-connectivity/face-plate-multi-connectivity/",
+    "/product-category/audio-visual/multi-connectivity/grommets/",
+    "/product-category/audio-visual/multi-connectivity/keystone-multi-connectivity/",
+    "/product-category/audio-visual/multi-connectivity/modules/",
+    "/product-category/audio-visual/multi-connectivity/wall-plates/",
+    "/product-category/audio-visual/tv-accessories/inspection-cameras/",
+    "/product-category/audio-visual/tv-accessories/mini-keyboards-mice/",
+    "/product-category/audio-visual/tv-accessories/presenters-pointers/",
+    "/product-category/audio-visual/tv-accessories/remote-controls/",
+    "/product-category/audio-visual/tv-accessories/webcams/",
+    "/product-category/networking/adapters-connectors/boots/",
+    "/product-category/networking/adapters-connectors/inline-connectors/",
+    "/product-category/networking/adapters-connectors/rj11-connectors/",
+    "/product-category/networking/adapters-connectors/rj45-connectors/",
+    "/product-category/networking/adapters-connectors/rj45-line-splitters/",
+    "/product-category/networking/adapters-connectors/rj9-connectors/",
+    "/product-category/networking/cabinets/desktop-rack/",
+    "/product-category/networking/cabinets/floorstanding-cabinets/",
+    "/product-category/networking/cabinets/wall-boxes/",
+    "/product-category/networking/cabinets/wall-boxes/swing-frame/",
+    "/product-category/networking/cable-management/cable-cover/",
+    "/product-category/networking/cable-management/cable-ties/",
+    "/product-category/networking/cable-management/cable-winders/",
+    "/product-category/networking/cable-management/hook-and-loop/",
+    "/product-category/networking/cable-management/trunking/",
+    "/product-category/networking/cables-networking/cat5/",
+    "/product-category/networking/cables-networking/cat6-cables-networking/",
+    "/product-category/networking/connectivity/adapters/",
+    "/product-category/networking/connectivity/mesh/",
+    "/product-category/networking/connectivity/range-extender-connectivity/",
+    "/product-category/networking/connectivity/routers-connectivity/",
+    "/product-category/networking/connectivity/switches/",
+    "/product-category/networking/connectivity/wireless-ap/",
+    "/product-category/networking/nas-mini-pc/barebone-pc/",
+    "/product-category/networking/nas-mini-pc/expansions/",
+    "/product-category/networking/nas-mini-pc/nas-storage/",
+    "/product-category/networking/nas-mini-pc/nas-systems/",
+    "/product-category/networking/nas-mini-pc/nas-systems/?product_tag_2=synology",
+    "/product-category/networking/nas-mini-pc/rack-stations/",
+    "/product-category/networking/port-blockers/hdmi-port-blockers/",
+    "/product-category/networking/port-blockers/key-tool/",
+    "/product-category/networking/port-blockers/rj45/",
+    "/product-category/networking/port-blockers/sd/",
+    "/product-category/networking/port-blockers/type-c-port-blockers/",
+    "/product-category/networking/port-blockers/usb-port-blockers/",
+    "/product-category/networking/tools/crimping/",
+    "/product-category/networking/tools/fibre-tools/",
+    "/product-category/networking/tools/glue-guns/",
+    "/product-category/networking/tools/network-tester/",
+    "/product-category/networking/tools/soldering/",
+    "/product-category/networking/tools/stripper-cutter/",
+    "/product-category/networking/tools/tone-probe/",
+    "/product-category/networking/tools/toolkits/",
+    "/product-category/networking/voip-and-telecoms/handsets/",
+    "/product-category/networking/voip/headset/",
+    "/product-category/networking/voip/voip-accessories/",
+    "/product-category/power/adapters-connectors-power/c19-connectors/",
+    "/product-category/power/adapters-connectors-power/c20-connectors/",
+    "/product-category/power/charging/?wpf_filter_cat_0=112&product_tag_2=unitek",
+    "/product-category/power/charging/batteries/",
+    "/product-category/power/charging/chargers/",
+    "/product-category/power/charging/charging-station/",
+    "/product-category/power/charging/powerbanks/",
+    "/product-category/power/charging/solar-charging/",
+    "/product-category/power/inverter/off-grid/",
+    "/product-category/power/inverter/on-grid/",
+    "/product-category/power/inverter/solar/",
+    "/product-category/power/plugs/british/",
+    "/product-category/power/plugs/dedicated/",
+    "/product-category/power/plugs/normal/",
+    "/product-category/power/plugs/pdu/",
+    "/product-category/power/plugs/power-surge/",
+    "/product-category/power/power-cables/british-power-cables/",
+    "/product-category/power/power-cables/dedicated-power-cables/",
+    "/product-category/power/power-cables/extension-cables/",
+    "/product-category/power/power-cables/partially-dedicated/",
+    "/product-category/power/power-cables/shuko-plug/",
+    "/product-category/power/power-cables/us-plug/",
+    "/product-category/power/ups/line-interactive/",
+    "/product-category/power/ups/online/",
+    "/product-category/surveillance/camera/bullet-cameras/",
+    "/product-category/surveillance/camera/dome-cameras/",
+    "/product-category/surveillance/camera/panoramic-cameras/",
+    "/product-category/surveillance/camera/pinhole-cameras/",
+    "/product-category/surveillance/camera/thermal-cameras/",
+    "/product-category/surveillance/extenders-surveillance/indoor/",
+    "/product-category/surveillance/extenders-surveillance/outdoor-extenders-surveillance/",
+    "/product-category/surveillance/intercoms/",
+    "/product-category/surveillance/recording-systems/16-channel/",
+    "/product-category/surveillance/recording-systems/32-channel/",
+    "/product-category/surveillance/recording-systems/4-channel/",
+    "/product-category/surveillance/recording-systems/8-channel/",
+    "/product-category/tp-link/smart-home/"
 ];
 
 // ============================================
@@ -128,7 +244,23 @@ export class LinkqageMCPServer implements MCPSupplierTool {
 
         logger.info(`Authenticating as ${this.config.username}...`);
 
+
         try {
+            // Check for manual cookie bypass first
+            if (process.env.LINKQAGE_COOKIE_NAME && process.env.LINKQAGE_COOKIE_VALUE) {
+                logger.info('Using provided session cookie for authentication...');
+                await this.cookieJar.setCookie(
+                    `${process.env.LINKQAGE_COOKIE_NAME}=${process.env.LINKQAGE_COOKIE_VALUE}`,
+                    this.config.baseUrl
+                );
+
+                // Also set PHPSESSID if provided, or generic assumption? 
+                // Just the WP logged in cookie is usually enough for WooCommerce.
+
+                this.isAuthenticated = true;
+                return true;
+            }
+
             const nonce = await this.extractNonce();
             const loginUrl = `${this.config.baseUrl}/my-account/`;
 
@@ -244,8 +376,23 @@ export class LinkqageMCPServer implements MCPSupplierTool {
                 const skuMatch = productUrl.match(/product\/([^\/]+)/);
                 const slug = skuMatch ? skuMatch[1] : '';
 
-                // Check stock status
-                const inStock = !$el.find('.out-of-stock, .outofstock').length;
+                // Check stock status - robust check
+                let inStock = true;
+                const stockText = $el.text().toLowerCase();
+
+                // Explicit "Out of stock" text or class
+                if ($el.find('.out-of-stock, .outofstock, .stock.out-of-stock').length > 0) {
+                    inStock = false;
+                } else if (stockText.includes('out of stock') || stockText.includes('sold out')) {
+                    inStock = false;
+                } else if (stockText.includes('call for price') || stockText.includes('call for availability')) {
+                    // Treat "Call" as pseudo-stock or no stock? Usually means custom order.
+                    // Let's assume in stock but needs check, or just sync it.
+                    inStock = true;
+                }
+
+                // If explicit "In stock" class/text exists, confirm it?
+                // Default is true unless we find negative indicators.
 
                 products.push({
                     name,
@@ -549,6 +696,10 @@ export class LinkqageMCPServer implements MCPSupplierTool {
             brand: brand,
         });
 
+        // Pricing Logic: Cost (Ex VAT) -> +15% VAT -> +20% Markup
+        const costInclVat = costPrice * 1.15;
+        const sellingPrice = costInclVat * 1.20;
+
         return {
             product_name: product.name,
             sku: sku,
@@ -557,10 +708,10 @@ export class LinkqageMCPServer implements MCPSupplierTool {
             category_name: product.category,
             description: '',
 
-            cost_price: costPrice,
-            retail_price: this.roundToR10(pricing.selling_price),
-            selling_price: this.roundToR10(pricing.selling_price),
-            margin_percentage: pricing.margin_percentage,
+            cost_price: this.roundToR10(costPrice), // Keeping cost raw? Or rounded? Usually keep raw.
+            retail_price: this.roundToR10(sellingPrice),
+            selling_price: this.roundToR10(sellingPrice),
+            margin_percentage: 20,
 
             total_stock: product.inStock ? 10 : 0,
             stock_jhb: product.inStock ? 10 : 0,

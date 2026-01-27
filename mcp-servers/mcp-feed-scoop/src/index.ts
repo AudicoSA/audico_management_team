@@ -24,16 +24,16 @@ import {
 // ============================================
 
 interface ScoopProduct {
-  SKU: string[];
-  Description: string[];
-  Manufacturer: string[];
-  DealerPrice: string[];
-  RetailPrice: string[];
-  TotalStock: string[];
-  CPT?: string[];
-  JHB?: string[];
-  DBN?: string[];
-  ImageURL: string[];
+  sku: string[];
+  description: string[];
+  manufacturer: string[];
+  dealer_price: string[];
+  retail_price: string[];
+  total_stock: string[];
+  cpt?: string[];
+  jhb?: string[];
+  dbn?: string[];
+  image_url: string[];
 }
 
 // ============================================
@@ -124,8 +124,8 @@ export class ScoopMCPServer implements MCPSupplierTool {
 
       // Extract products
       let products: ScoopProduct[] = [];
-      if (parsedXml && parsedXml.root && parsedXml.root.entry) {
-        products = parsedXml.root.entry;
+      if (parsedXml && parsedXml.products && parsedXml.products.product) {
+        products = parsedXml.products.product;
       }
 
       logger.info(`📦 Parsed ${products.length} products from XML feed`);
@@ -165,7 +165,7 @@ export class ScoopMCPServer implements MCPSupplierTool {
             productsUpdated++;
           }
         } catch (error: any) {
-          const sku = rawProduct.SKU?.[0] || 'unknown';
+          const sku = rawProduct.sku?.[0] || 'unknown';
           const errorMsg = `Failed to process ${sku}: ${error.message}`;
           errors.push(errorMsg);
           logger.error(errorMsg);
@@ -266,18 +266,18 @@ export class ScoopMCPServer implements MCPSupplierTool {
 
   private transformToUnified(scoopProduct: ScoopProduct): UnifiedProduct {
     // Extract from XML arrays (take first element)
-    const sku = scoopProduct.SKU?.[0] || '';
-    const description = scoopProduct.Description?.[0] || '';
-    const manufacturer = scoopProduct.Manufacturer?.[0] || '';
-    const dealerPrice = parseFloat(scoopProduct.DealerPrice?.[0] || '0');
-    const retailPrice = parseFloat(scoopProduct.RetailPrice?.[0] || '0');
-    const imageUrl = scoopProduct.ImageURL?.[0] || '';
+    const sku = scoopProduct.sku?.[0] || '';
+    const description = scoopProduct.description?.[0] || '';
+    const manufacturer = scoopProduct.manufacturer?.[0] || '';
+    const dealerPrice = parseFloat(scoopProduct.dealer_price?.[0] || '0');
+    const retailPrice = parseFloat(scoopProduct.retail_price?.[0] || '0');
+    const imageUrl = scoopProduct.image_url?.[0] || '';
 
     // Regional stock
-    const stock_cpt = parseInt(scoopProduct.CPT?.[0] || '0');
-    const stock_jhb = parseInt(scoopProduct.JHB?.[0] || '0');
-    const stock_dbn = parseInt(scoopProduct.DBN?.[0] || '0');
-    const total_stock = stock_cpt + stock_jhb + stock_dbn;
+    const stock_cpt = parseInt(scoopProduct.cpt?.[0] || '0');
+    const stock_jhb = parseInt(scoopProduct.jhb?.[0] || '0');
+    const stock_dbn = parseInt(scoopProduct.dbn?.[0] || '0');
+    const total_stock = parseInt(scoopProduct.total_stock?.[0] || '0');
 
     // Calculate margin from dealer/retail prices
     const marginPercentage =

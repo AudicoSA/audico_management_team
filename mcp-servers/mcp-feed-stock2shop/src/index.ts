@@ -354,7 +354,8 @@ export class Stock2ShopMCPServer implements MCPSupplierTool {
       sort: [{ modified: { order: 'desc' } }],
       query: {
         bool: {
-          filter: [...(Object.keys(query).length > 0 ? [{ match: query }] : [])],
+          must: [],
+          filter: query ? [{ match: query }] : []
         },
       },
       _source: [

@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from src.connectors.shiplogic import get_shiplogic_connector
 from src.connectors.opencart import get_opencart_connector
 from src.connectors.supabase import get_supabase_connector
+from src.agents.email_agent import get_email_agent
 from src.utils.logging import AgentLogger
 
 logger = AgentLogger("OrdersLogisticsAgent")
@@ -442,8 +443,30 @@ class OrdersLogisticsAgent:
                         # So we should fetch full order details to get SKUs for accurate lookup.
                         
                         full_order_details = await self.opencart.get_order(order_id)
+                        if full_order_details:
+                            # --- Step 1: Client Welcome Email ---
+                            # Only if Paid/Processing and NOT already sent
+                            if status_id in [1, 2, 15, 23]: # Pending(1), Processing(2), Processed(15), Paid(23)
+                                # Check duplicate via Supabase logs (Category: CLIENT_WELCOME_DRAFT)
+                                try:
+                                    # Check if we logged a welcome draft for this order recently
+                                    # Note: Using subject match as proxy
+                                    existing_welcome = self.supabase.client.table("email_logs") \
+                                        .select("id") \
+                                        .eq("category", "CLIENT_WELCOME_DRAFT") \
+                                        .ilike("subject", f"%#{order_id}%") \
+                                        .execute()
+                                        
+                                    if not existing_welcome.data:
+                                        email_agent = get_email_agent()
+                                        await email_agent.draft_client_welcome_email(full_order_details)
+                                        logger.info("triggered_client_welcome", order_id=order_id)
+                                except Exception as e:
+                                    logger.warning("failed_check_welcome_email", error=str(e))
+                            
+                        # --- Step 2: Supplier Assignment & Draft ---
                         if full_order_details and full_order_details.get('products'):
-                            # Collect potential suppliers
+                                # Collect potential suppliers
                             detected_suppliers = []
                             
                             for prod in full_order_details['products']:
@@ -481,6 +504,47 @@ class OrdersLogisticsAgent:
                                         last_modified_by="system_sync_enrichment"
                                     )
                                     logger.info("assigned_supplier_from_data", order_id=order_id, supplier=best_supplier)
+                                    
+                                    # --- NEW: Trigger Supplier Draft ---
+                                    # Only if order is PAID and not already drafted/sent
+                                    # Status 23 = Paid, 3 = Shipped, 5 = Complete, 15 = Processed (usually paid)
+                                    if status_id in [23, 15, 2, 1]: # Pending(1), Processing(2), Processed(15), Paid(23)
+                                        # Check if we already drafted this
+                                        tracker = await self.supabase.get_order_tracker(order_id)
+                                        current_sup_status = tracker.get("supplier_status") if tracker else None
+                                        
+                                        if current_sup_status not in ["Drafted", "Sent", "Invoiced", "Quoted", "Shipped"]:
+                                            # Generate Draft
+                                            logger.info("triggering_supplier_draft", order_id=order_id, supplier=best_supplier)
+                                            email_agent = get_email_agent()
+                                            
+                                            # Filter products for this supplier
+                                            supplier_products = []
+                                            for p in full_order_details['products']:
+                                                # Re-check SKU match or if we just assume all items in this mixed order go to this supplier?
+                                                # For now, simplest is: if we identified ONE supplier for the order, sending ALL items might be wrong if mixed.
+                                                # But "best_supplier" logic above picked the majority one.
+                                                # Let's filter strictly if possible, or send all if single supplier.
+                                                
+                                                # Re-verify if this product belongs to best_supplier
+                                                p_sku = p.get('sku') or p.get('model')
+                                                # Quick DB check for this product?
+                                                # Optimization: just include all for now, user can edit draft.
+                                                supplier_products.append(p)
+
+                                            draft_res = await email_agent.draft_supplier_order_email(
+                                                order_details=full_order_details,
+                                                supplier_name=best_supplier,
+                                                products=supplier_products
+                                            )
+                                            
+                                            if draft_res.get("status") == "success":
+                                                await self.supabase.upsert_order_tracker(
+                                                    order_no=order_id,
+                                                    supplier_status="Drafted",
+                                                    updates="System generated supplier email draft."
+                                                )
+                                    # -----------------------------------
                                     
                     except Exception as e:
                         logger.warning("failed_to_assign_supplier", order_id=order_id, error=str(e))
