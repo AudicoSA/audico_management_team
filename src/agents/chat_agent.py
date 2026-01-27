@@ -26,10 +26,60 @@ class ChatAgent:
         """
         logger.info(f"Searching products with query: {query}")
         try:
-            # Search 'products' table by Name, SKU, or Brand
-            response = self.sb.client.table("products").select("*").or_(f"product_name.ilike.%{query}%,sku.ilike.%{query}%,brand.ilike.%{query}%").limit(10).execute()
+            # 1. Try splitting query into terms for smarter matching
+            terms = query.strip().split()
+            if not terms:
+                return "Please provide a search term."
             
+            # Construct a flexible query:
+            # We want to find items where product_name contains ALL terms
+            # OR sku contains the full query
+            # OR brand contains the full query
+            
+            # Start with base query
+            db_query = self.sb.client.table("products").select("*")
+            
+            # If plain single word, use simple OR
+            if len(terms) == 1:
+                db_query = db_query.or_(f"product_name.ilike.%{query}%,sku.ilike.%{query}%,brand.ilike.%{query}%")
+                response = db_query.limit(10).execute()
+            else:
+                # For multiple words, we want:
+                # (Name matches Term1 OR SKU matches Term1 OR Brand matches Term1)
+                # AND
+                # (Name matches Term2 OR SKU matches Term2 OR Brand matches Term2)
+                # ...
+                
+                # Supabase/Postgrest allows chaining filters which acts as AND.
+                # So we chain an .or_() for each term.
+                
+                temp_q = self.sb.client.table("products").select("*")
+                for term in terms:
+                    # Construct the OR filter for this specific term
+                    # "product_name.ilike.%term%,sku.ilike.%term%,brand.ilike.%term%"
+                    term_filter = f"product_name.ilike.%{term}%,sku.ilike.%{term}%,brand.ilike.%{term}%"
+                    temp_q = temp_q.or_(term_filter)
+                
+                response = temp_q.limit(10).execute()
+
             products = response.data
+            
+            # 2. If strict AND search yields nothing, try relaxed OR search (any term match)
+            if not products and len(terms) > 1:
+                 # Try finding ANY term (less strict)
+                 # This is one giant OR: Name/SKU match Term1 OR Name/SKU match Term2...
+                 
+                 # Build a list of conditions
+                 conditions = []
+                 for t in terms:
+                     conditions.append(f"product_name.ilike.%{t}%")
+                     conditions.append(f"sku.ilike.%{t}%")
+                     conditions.append(f"brand.ilike.%{t}%")
+                 
+                 or_clause = ",".join(conditions)
+                 response = self.sb.client.table("products").select("*").or_(or_clause).limit(10).execute()
+                 products = response.data
+
             if not products:
                 return "No products found matching that query."
             
@@ -45,20 +95,22 @@ class ChatAgent:
                     logger.error(f"Error fetching suppliers: {e}")
 
             # Format product info
-            result_str = ""
+            result_str = f"Found {len(products)} products for '{query}':\n\n"
             for p in products:
                 sup_name = supplier_map.get(p.get('supplier_id'), "Unknown Supplier")
                 
-                result_str += f"- Name: {p.get('product_name')}\n"
-                result_str += f"  Brand: {p.get('brand')}\n"
-                result_str += f"  SKU: {p.get('sku')}\n"
-                result_str += f"  Supplier: {sup_name}\n" 
+                result_str += f"- **{p.get('product_name')}**\n"
+                result_str += f"  - Brand: {p.get('brand')}\n"
+                result_str += f"  - SKU: `{p.get('sku')}`\n"
+                result_str += f"  - Supplier: {sup_name}\n" 
                 
                 # Check for price/stock
-                if 'price' in p: result_str += f"  Price: {p['price']}\n"
-                if 'selling_price' in p: result_str += f"  Price: {p['selling_price']}\n"
-                if 'stock' in p: result_str += f"  Stock: {p['stock']}\n"
-                if 'updated_at' in p: result_str += f"  Last Update: {p['updated_at']}\n"
+                if 'price' in p: result_str += f"  - Price: {p['price']}\n"
+                if 'selling_price' in p: result_str += f"  - Selling Price: {p['selling_price']}\n"
+                
+                stock = p.get('total_stock', 0)
+                stock_display = f"**{stock}**" if stock > 0 else "0 (Out of Stock)"
+                result_str += f"  - Stock: {stock_display}\n"
                 
                 result_str += "\n"
                 
@@ -88,14 +140,14 @@ class ChatAgent:
             if not orders:
                 return f"No orders found matching '{query}'."
                 
-            result_str = ""
+            result_str = f"Found {len(orders)} orders:\n\n"
             for o in orders:
-                result_str += f"- Order #: {o.get('order_no')}\n"
-                result_str += f"  Name: {o.get('order_name')}\n"
-                result_str += f"  Supplier: {o.get('supplier')}\n"
-                result_str += f"  Status: {o.get('supplier_status')}\n"
+                result_str += f"### Order #{o.get('order_no')}\n"
+                result_str += f"- **Name**: {o.get('order_name')}\n"
+                result_str += f"- **Supplier**: {o.get('supplier')}\n"
+                result_str += f"- **Status**: {o.get('supplier_status')}\n"
                 if o.get('updates'):
-                    result_str += f"  Latest Updates: {str(o.get('updates'))[:200]}...\n"
+                    result_str += f"- **Latest Update**: _{str(o.get('updates'))[:200]}..._\n"
                 result_str += "\n"
                 
             return result_str
@@ -104,7 +156,7 @@ class ChatAgent:
             logger.error(f"Error searching orders: {e}")
             return f"Error searching orders: {e}"
 
-    async def process_message(self, user_message: str) -> str:
+    async def process_message(self, user_message: str, sender: str = "User") -> str:
         """
         Process a user message and return a response.
         """
