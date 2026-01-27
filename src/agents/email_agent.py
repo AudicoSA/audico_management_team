@@ -1,6 +1,7 @@
 """Email Management Agent for handling customer and supplier emails."""
 import re
 from typing import Any, Dict, Optional, List
+from datetime import datetime
 
 from src.connectors.gmail import GmailConnector, ParsedEmail, get_gmail_connector
 from src.connectors.opencart import OpenCartConnector, get_opencart_connector
@@ -681,7 +682,7 @@ Extract invoice details."""
             
             await self.supabase.update_email_log(
                 gmail_message_id=pseudo_msg_id,
-                status="DRAFTED",
+                status="draft",
                 draft_content=body,
                 handled_by_agent="OrdersLogisticsAgent"
             )
@@ -791,10 +792,10 @@ Extract invoice details."""
                 }
             )
             
-            # Mark as DRAFTED immediately
+            # Mark as draft immediately so it appears in dashboard
             await self.supabase.update_email_log(
                 gmail_message_id=pseudo_msg_id,
-                status="DRAFTED",
+                status="draft",
                 draft_content=body,
                 handled_by_agent="OrdersLogisticsAgent"
             )
