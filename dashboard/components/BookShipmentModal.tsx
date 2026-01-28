@@ -4,7 +4,7 @@ import { supabase, type Supplier } from '@/lib/supabase'
 interface BookShipmentModalProps {
     isOpen: boolean
     onClose: () => void
-    onConfirm: (address: any, dryRun: boolean, supplierInvoice: string) => void
+    onConfirm: (address: any, dryRun: boolean, supplierInvoice: string, supplierName?: string) => void
     orderId: string
     loading: boolean
     initialSupplierInvoice?: string
@@ -158,7 +158,19 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
             }
         }
 
-        onConfirm(address, dryRun, supplierInvoice)
+        // Determine selected supplier name
+        let finalSupplierName = ''
+        if (saveAsNew && newSupplierName) {
+            finalSupplierName = newSupplierName
+        } else if (selectedSupplierId !== 'custom') {
+            const s = suppliers.find(s => s.id === selectedSupplierId)
+            if (s) finalSupplierName = s.name
+        } else {
+            // custom with no save? maybe use company name
+            finalSupplierName = address.company
+        }
+
+        onConfirm(address, dryRun, supplierInvoice, finalSupplierName)
     }
 
     if (!isOpen) return null

@@ -127,11 +127,18 @@ export default function OrdersPage() {
     setIsModalOpen(true)
   }
 
-  const handleConfirmBooking = async (collectionAddress: any, dryRun: boolean, supplierInvoice: string) => {
+  const handleConfirmBooking = async (collectionAddress: any, dryRun: boolean, supplierInvoice: string, supplierName?: string) => {
     if (!selectedOrderForBooking) return
 
     setBookingLoading(true)
     try {
+      // Optimistic Update of Supplier if changed
+      if (supplierName) {
+        setOrders(orders.map(o =>
+          o.order_no === selectedOrderForBooking ? { ...o, supplier: supplierName } : o
+        ))
+      }
+
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
       const response = await fetch(`${apiUrl}/shipments/create`, {
         method: 'POST',
@@ -140,7 +147,8 @@ export default function OrdersPage() {
           order_id: selectedOrderForBooking,
           dry_run: dryRun,
           collection_address: collectionAddress,
-          supplier_invoice: supplierInvoice
+          supplier_invoice: supplierInvoice,
+          supplier_name: supplierName // Pass to backend
         })
       })
 

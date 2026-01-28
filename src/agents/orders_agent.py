@@ -58,6 +58,15 @@ class OrdersLogisticsAgent:
         logger.info("creating_shipment", order_id=order_id, dry_run=dry_run)
 
         try:
+            # 0. Update Supplier if provided in payload (Client Override)
+            explicit_supplier = data.get("supplier_name")
+            if explicit_supplier:
+                 logger.info("updating_order_supplier_from_payload", order_id=order_id, supplier=explicit_supplier)
+                 await self.supabase.upsert_order_tracker(
+                     order_no=order_id,
+                     supplier=explicit_supplier,
+                     last_modified_by="user_shipping_modal"
+                 )
             # 1. Fetch order details from OpenCart
             order = await self.opencart.get_order(order_id)
             if not order:
