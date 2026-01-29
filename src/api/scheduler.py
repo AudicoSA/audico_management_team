@@ -73,3 +73,8 @@ async def run_universal_sync(background_tasks: BackgroundTasks):
         "note": "Check /api/logs for progress"
     }
 
+@router.get("/run-universal-sync")
+async def run_universal_sync_get(background_tasks: BackgroundTasks):
+    """Trigger universal sync via GET (for cron)."""
+    return await run_universal_sync(background_tasks)
+

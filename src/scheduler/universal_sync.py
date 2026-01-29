@@ -26,9 +26,12 @@ class UniversalProductSyncer:
 
         try:
             # 1. Fetch all matches
-            matches_response = self.supabase.client.table("product_matches")\
-                .select("internal_product_id, opencart_product_id")\
+            # 1. Fetch all matches
+            matches_response = await asyncio.to_thread(
+                lambda: self.supabase.client.table("product_matches")
+                .select("internal_product_id, opencart_product_id")
                 .execute()
+            )
             
             all_matches = matches_response.data
             matches = [m for m in all_matches if m.get('opencart_product_id')]
@@ -61,11 +64,14 @@ class UniversalProductSyncer:
             return # Should be filtered already data logic check
 
         # 1. Get current Supabase Data
-        p_res = self.supabase.client.table("products")\
-            .select("sku, selling_price, total_stock, product_name")\
-            .eq("id", internal_id)\
-            .limit(1)\
+        # 1. Get current Supabase Data
+        p_res = await asyncio.to_thread(
+            lambda: self.supabase.client.table("products")
+            .select("sku, selling_price, total_stock, product_name")
+            .eq("id", internal_id)
+            .limit(1)
             .execute()
+        )
         
         if not p_res.data:
             # logger.warning("linked_product_missing_in_db", internal_id=internal_id) # Optional: reduce noise

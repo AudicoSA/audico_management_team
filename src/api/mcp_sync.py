@@ -64,6 +64,11 @@ async def trigger_single_sync(supplier_key: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/sync/{supplier_key}")
+async def trigger_single_sync_get(supplier_key: str):
+    """Trigger sync for a specific supplier (GET wrapper for cron)."""
+    return await trigger_single_sync(supplier_key)
+
 @router.get("/sync-status")
 async def get_sync_status():
     """Get status of recent MCP syncs."""
