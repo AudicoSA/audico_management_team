@@ -104,6 +104,7 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI app
+app = FastAPI(
     title="Audico AI Executive Management System",
     description="Multi-agent AI system for e-commerce automation",
     version="0.1.1",
