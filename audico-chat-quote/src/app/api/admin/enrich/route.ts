@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { bulkEnrichProducts, getEnrichmentStats } from "@/lib/enrichment/bulk-enrich";
 import { classifyAndUpdateProduct } from "@/lib/enrichment/classifier";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/admin/enrich
  * Get enrichment statistics
