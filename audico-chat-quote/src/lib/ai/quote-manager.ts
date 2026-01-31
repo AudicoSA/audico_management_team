@@ -31,6 +31,14 @@ interface Quote {
 
 export class QuoteManager {
   private quotes: Map<string, Quote> = new Map();
+  private static instance: QuoteManager;
+
+  public static getInstance(): QuoteManager {
+    if (!QuoteManager.instance) {
+      QuoteManager.instance = new QuoteManager();
+    }
+    return QuoteManager.instance;
+  }
 
   /**
    * Create a new quote
