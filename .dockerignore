@@ -23,6 +23,9 @@ __pycache__
 **/*.pyc
 .DS_Store
 Thumbs.db
+venv
+venv_old
+temp
 
 # Exclude specific heavy artifacts if any
 debug-*.png
