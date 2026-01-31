@@ -44,8 +44,8 @@ export function ConsultationListTable({ initialData }: Props) {
 
     // Sort
     filtered.sort((a, b) => {
-      const aVal = a[sortColumn as keyof ConsultationRequest];
-      const bVal = b[sortColumn as keyof ConsultationRequest];
+      const aVal = a[sortColumn as keyof ConsultationRequest] || "";
+      const bVal = b[sortColumn as keyof ConsultationRequest] || "";
 
       if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
       if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
@@ -244,9 +244,8 @@ function StatusBadge({ status }: { status: string }) {
 
   return (
     <span
-      className={`px-2 py-1 text-xs font-semibold rounded-full border ${
-        colors[status as keyof typeof colors]
-      }`}
+      className={`px-2 py-1 text-xs font-semibold rounded-full border ${colors[status as keyof typeof colors]
+        }`}
     >
       {status.replace("_", " ")}
     </span>
