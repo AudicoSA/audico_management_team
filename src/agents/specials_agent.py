@@ -27,9 +27,13 @@ class SpecialsAgent:
         logger.info(f"Ingesting flyer: {file_path} from {supplier_name}")
         
         try:
-            # 1. Encode Image
-            # TODO: Handle PDF conversion to image if needed. For now assuming Image (JPG/PNG).
-            if file_path.lower().endswith(".pdf"):
+            # 1. Encode Image / Handle File Type
+            file_ext = file_path.lower()
+            
+            if file_ext.endswith(('.xlsx', '.xls')):
+                return await self.ingest_excel_flyer(file_path, supplier_name)
+
+            if file_ext.endswith(".pdf"):
                 # Fallback: Try to extract text directly from PDF
                 import PyPDF2
                 try:
@@ -39,11 +43,14 @@ class SpecialsAgent:
                         for page in reader.pages:
                             text_content += page.extract_text() + "\n"
                     
-                    return await self.ingest_text_flyer(text_content, supplier_name, source_ref=file_path)
+                    if len(text_content.strip()) < 50:
+                         # Likely image-based PDF. TODO: Convert to images.
+                         pass
+                    else:
+                        return await self.ingest_text_flyer(text_content, supplier_name, source_ref=file_path)
 
                 except Exception as ex:
                      return {"status": "error", "message": f"PDF parsing failed: {ex}. Please send an Image (JPG/PNG) for best results."}
-            else:
                 # Image Flow (Vision)
                 with open(file_path, "rb") as image_file:
                     base64_image = base64.b64encode(image_file.read()).decode('utf-8')
@@ -77,6 +84,66 @@ class SpecialsAgent:
         except Exception as e:
             logger.error(f"Error processing flyer: {e}")
             return {"status": "error", "message": str(e)}
+
+    async def ingest_excel_flyer(self, file_path: str, supplier_name: str) -> Dict[str, Any]:
+        """
+        Process Excel flyer using Pandas and AI column mapping.
+        """
+        import pandas as pd
+        
+        try:
+            df = pd.read_excel(file_path)
+            
+            # Map columns
+            columns = list(df.columns.astype(str))
+            prompt = f"""Map these Excel columns to standard fields:
+Columns: {', '.join(columns)}
+
+Standard Fields:
+- sku (Product Code / Model)
+- description (Product Name / Description)
+- price_excl (Normal Dealer Price Excl VAT)
+- promo_price_excl (Special/Promo Price Excl VAT)
+- retail_price (RRP / Retail)
+
+Respond in JSON only:
+{{
+  "sku": "exact_column_name_or_null",
+  "description": "exact_column_name_or_null",
+  "price_excl": "exact_column_name_or_null",
+  "promo_price_excl": "exact_column_name_or_null"
+}}
+"""
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                response_format={"type": "json_object"}
+            )
+            mapping = json.loads(response.choices[0].message.content)
+            
+            deals = []
+            for idx, row in df.iterrows():
+                sku = row.get(mapping.get("sku"))
+                price = row.get(mapping.get("promo_price_excl")) or row.get(mapping.get("price_excl"))
+                
+                if pd.notna(sku) and pd.notna(price):
+                    deals.append({
+                        "sku": str(sku).strip(),
+                        "product_name": str(row.get(mapping.get("description"), "")).strip(),
+                        "price": float(price) if isinstance(price, (int, float)) else str(price),
+                        "description": str(row.get(mapping.get("description"), "")).strip()
+                    })
+            
+            result = {
+                "title": f"Excel Specials: {file_path}",
+                "deals": deals
+            }
+            return await self._save_results(result, supplier_name, source=file_path)
+
+        except Exception as e:
+            logger.error(f"Error processing Excel flyer: {e}")
+            return {"status": "error", "message": f"Excel processing failed: {e}"}
 
     async def ingest_text_flyer(self, text_content: str, supplier_name: str = "Unknown", source_ref: str = "Email Body") -> Dict[str, Any]:
         """
@@ -144,7 +211,7 @@ class SpecialsAgent:
             
             self.sb.client.table("supplier_specials").insert(payload).execute()
             
-            logger.info("specials_saved", count=len(deals))
+            logger.info(f"Specials saved. Count: {len(deals)}")
             
             # AUTO-SYNC: Push to OpenCart immediately
             try:

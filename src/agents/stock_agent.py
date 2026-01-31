@@ -344,8 +344,7 @@ class StockListingsAgent:
         try:
             # 1. Mark as processing
             self.supabase.client.table("price_list_uploads").update({
-                "status": "processing",
-                "started_at": datetime.utcnow().isoformat()
+                "status": "processing"
             }).eq("id", upload_id).execute()
             
             # 2. Download file

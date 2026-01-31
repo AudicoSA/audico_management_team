@@ -129,8 +129,9 @@ class EmailClient:
                                         else:
                                             filename = filename_parts[0]
 
-                                        # Save PDF only
-                                        if filename.lower().endswith(".pdf"):
+                                        # Save PDF or Excel
+                                        ext = filename.lower()
+                                        if ext.endswith((".pdf", ".xlsx", ".xls")):
                                             import os
                                             temp_dir = os.path.join(os.getcwd(), "temp", "attachments")
                                             os.makedirs(temp_dir, exist_ok=True)
