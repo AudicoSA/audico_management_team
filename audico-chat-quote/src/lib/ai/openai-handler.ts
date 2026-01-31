@@ -27,6 +27,8 @@ interface ChatResponse {
   needsMoreInfo?: boolean;
   isComplete?: boolean;
   totalPrice?: number;
+  consultationRequest?: any;
+  isEscalated?: boolean;
 }
 
 export class OpenAIConversationHandler {
