@@ -47,3 +47,4 @@ apscheduler>=3.10.0
 thefuzz>=0.22.1
 numpy<2.0.0
 pypdf
+cffi>=1.15.0

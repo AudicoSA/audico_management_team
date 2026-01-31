@@ -30,7 +30,9 @@ nixPkgs = [
     "glib",
     "gtk3",
     "pango",
-    "at-spi2-core"
+    "at-spi2-core",
+    "libffi",
+    "pkg-config"
 ]
 nixLibs = ["stdenv.cc.cc.lib", "zlib"]
 
