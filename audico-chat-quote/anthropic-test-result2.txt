@@ -1,0 +1,135 @@
+﻿[dotenv@17.2.3] injecting env (16) from .env.local -- tip: ≡ƒöæ add access controls to secrets: https://dotenvx.com/ops
+============================================================
+ANTHROPIC API TEST
+============================================================
+API Key: sk-ant-api03-xsodlWiJhE40...
+Sending test message to Claude...
+node : 
+At line:1 char:1
++ node scripts/test-an
+thropic-simple.mjs 
+2>&1 | Out-File 
+-Encoding utf8 ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (:String) [   
+ ], RemoteExceptio    
+n
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+Γ¥î ANTHROPIC API 
+ERROR:
+Name: Error
+Message: 404 {"type":"
+error","error":{"type"
+:"not_found_error","me
+ssage":"model: claude-
+sonnet-4-5-20250514"},
+"request_id":"req_011C
+XYC4vyn5PD9gvLdUxz7p"}
+Status: 404
+Type: undefined
+
+Full error: 
+NotFoundError: 404 {"t
+ype":"error","error":{
+"type":"not_found_erro
+r","message":"model: c
+laude-sonnet-4-5-20250
+514"},"request_id":"re
+q_011CXYC4vyn5PD9gvLdU
+xz7p"}
+    at 
+APIError.generate (fil
+e:///D:/AUDICO-CHAT-QU
+OTE-X/audico-chat-quot
+e/node_modules/@anthro
+pic-ai/sdk/error.mjs:4
+6:20)
+    at Anthropic.makeS
+tatusError (file:///D:
+/AUDICO-CHAT-QUOTE-X/a
+udico-chat-quote/node_
+modules/@anthropic-ai/
+sdk/core.mjs:275:25)
+    at 
+Anthropic.makeRequest 
+(file:///D:/AUDICO-CHA
+T-QUOTE-X/audico-chat-
+quote/node_modules/@an
+thropic-ai/sdk/core.mj
+s:319:30)
+    at process.process
+TicksAndRejections (no
+de:internal/process/ta
+sk_queues:105:5)
+    at async file:///D
+:/AUDICO-CHAT-QUOTE-X/
+audico-chat-quote/scri
+pts/test-anthropic-sim
+ple.mjs:36:22 {
+  status: 404,
+  headers: {
+    'anthropic-organiz
+ation-id': '2fe65bad-a
+95e-4957-a2ce-f7af04f3
+8d38',
+    
+'cf-cache-status': 
+'DYNAMIC',
+    'cf-ray': '9c4997f
+f2e5e881b-DUR',
+    connection: 
+'keep-alive',
+    
+'content-encoding': 
+'gzip',
+    'content-type': 
+'application/json',
+    date: 'Tue, 27 
+Jan 2026 16:23:17 
+GMT',
+    'request-id': 'req
+_011CXYC4vyn5PD9gvLdUx
+z7p',
+    server: 
+'cloudflare',
+    'strict-transport-
+security': 
+'max-age=31536000; 
+includeSubDomains; 
+preload',
+    
+'transfer-encoding': 
+'chunked',
+    'x-envoy-upstream-
+service-time': '52',
+    'x-robots-tag': 
+'none',
+    'x-should-retry': 
+'false'
+  },
+  request_id: 'req_011
+CXYC4vyn5PD9gvLdUxz7p'
+,
+  error: {
+    type: 'error',
+    error: {
+      type: 
+'not_found_error',
+      message: 
+'model: claude-sonnet-
+4-5-20250514'
+    },
+    request_id: 'req_0
+11CXYC4vyn5PD9gvLdUxz7
+p'
+  }
+}
+
+============================================================

@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app:*)",
+      "Bash(cd:*)",
+      "Bash(tree:*)",
+      "Bash(tasklist:*)",
+      "Bash(curl:*)",
+      "Bash(dir:*)",
+      "Bash(npm run test:ai:*)",
+      "Bash(npm run test:ai:single:*)",
+      "Bash(ls -la \"d:\\\\AUDICO-CHAT-QUOTE-X\\\\src\\\\lib\"\" 2>/dev/null || echo \"Directory not found \")",
+      "Bash(ls:*)",
+      "Bash(taskkill:*)",
+      "Bash(start cmd /k \"npm run dev\")",
+      "Bash(node test-ai-native.js:*)",
+      "Bash(node test-old-endpoint.js:*)",
+      "Bash(node test-claude-models.js:*)",
+      "Bash(node test-comprehensive.js:*)",
+      "Bash(node:*)",
+      "Bash(cmd /c \"taskkill /F /PID 16944\")",
+      "Bash(cmd /c \"taskkill /F /PID 25508\")",
+      "Bash(PORT=3003 npm run dev:*)",
+      "Bash(npx next build:*)",
+      "Bash(PORT=3010 npm run dev:*)",
+      "Bash(NODE_OPTIONS='--inspect' DEBUG='*' npx next dev:*)",
+      "Bash(NODE_OPTIONS=\"--env-file=.env.local\" npx tsx:*)",
+      "Bash(npm uninstall:*)"
+    ]
+  }
+}

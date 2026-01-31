@@ -1,0 +1,18 @@
+hi kenny, can you connect via ethernet please?
+
+ok
+
+thanks
+
+ok on lan
+
+
+can you reconnect the lan? it is only auto negotiating to 100mbps and also no dhcp
+its a 100mb usb to lan thing - let me check dhcp
+
+okay now i can see dhcp, do you have a 1 gig adapter? not here unfortunately, but you connect fine with this one last time
+hmm okay i will try again
+very close, can we align the Subtotal, vat and total with the box above it - and we still seem to be adding vat when our prices include vat - so the Denon AVR-X1800h total including vat should be R16790 and the vat amount should be R2190
+
+with regards to customer details, can we perhaps ask the client for the necessary information when clicking request quote, which then adds it to the invoice?
+

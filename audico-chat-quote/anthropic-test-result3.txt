@@ -1,0 +1,22 @@
+﻿[dotenv@17.2.3] injecting env (16) from .env.local -- tip: ≡ƒùé∩╕Å backup and recover secrets: https://dotenvx.com/ops
+============================================================
+ANTHROPIC API TEST
+============================================================
+API Key: sk-ant-api03-xsodlWiJhE40...
+Sending test message to Claude...
+
+Γ£à SUCCESS in 3488ms
+Response:
+Hello! How can I help you today?
+
+Stop reason: end_turn
+Usage: {
+  input_tokens: 16,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+  cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+  output_tokens: 12,
+  service_tier: 'standard'
+}
+
+============================================================
