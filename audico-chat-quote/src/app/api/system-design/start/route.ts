@@ -3,6 +3,8 @@ import { SystemDesignEngine } from "@/lib/flows/system-design/engine";
 import { RequirementsSchema } from "@/lib/types";
 import { v4 as uuidv4 } from "uuid";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

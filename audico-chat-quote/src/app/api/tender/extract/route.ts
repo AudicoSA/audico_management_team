@@ -43,6 +43,8 @@ Return ONLY valid JSON in this exact format:
 Be thorough - extract every single product mentioned, even partial items.
 If text is unclear or handwritten, make your best interpretation.`;
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();

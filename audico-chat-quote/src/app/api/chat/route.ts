@@ -10,6 +10,8 @@ import { RequirementsSchema } from "@/lib/types";
 import type { Product } from "@/lib/types";
 import { v4 as uuidv4 } from "uuid";
 
+export const dynamic = "force-dynamic";
+
 // Toggle between GPT and Claude agents
 const USE_GPT_AGENT = process.env.USE_GPT_AGENT === "true" || true; // Default to GPT
 

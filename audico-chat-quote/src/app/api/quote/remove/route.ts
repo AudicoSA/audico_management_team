@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { SystemDesignEngine } from "@/lib/flows/system-design/engine";
 import { SimpleQuoteEngine } from "@/lib/flows/simple-quote/engine";
 
+export const dynamic = "force-dynamic";
+
 /**
  * DELETE Product from Quote Endpoint
  * Handles removing products and detecting if critical components were removed

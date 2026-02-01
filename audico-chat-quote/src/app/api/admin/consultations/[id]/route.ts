@@ -3,6 +3,8 @@ import { getSupabaseServer } from "@/lib/supabase";
 import { consultationRequestManager } from "@/lib/ai/consultation-request-manager";
 import { requireAdminAuth } from "@/lib/auth/auth-helpers";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }

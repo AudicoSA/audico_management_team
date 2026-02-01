@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { SimpleQuoteEngine } from "@/lib/flows/simple-quote/engine";
 import { v4 as uuidv4 } from "uuid";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

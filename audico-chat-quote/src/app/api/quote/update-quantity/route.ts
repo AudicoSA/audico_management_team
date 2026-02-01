@@ -5,6 +5,8 @@ import { QuoteManager } from "@/lib/ai/quote-manager";
  * Update Product Quantity Endpoint
  * Updates the quantity of a product in the quote
  */
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

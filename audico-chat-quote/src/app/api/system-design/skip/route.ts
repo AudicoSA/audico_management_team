@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SystemDesignEngine } from "@/lib/flows/system-design/engine";
 
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/system-design/skip
  * Skip the current step in a guided quote flow
