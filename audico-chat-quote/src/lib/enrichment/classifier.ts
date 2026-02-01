@@ -46,7 +46,18 @@ export const COMPONENT_TYPES = [
 
 export type ComponentTypeClassification = typeof COMPONENT_TYPES[number];
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+// Lazy initialization to avoid build-time errors when API key isn't available
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI {
+  if (!openai) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is not configured");
+    }
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
 
 /**
  * Classify a single product using GPT-4o-mini (fast and cheap)
@@ -96,7 +107,7 @@ Brand: ${brand || "Unknown"}
 Reply with ONLY the code (e.g., "avr" or "amp" or "speakerphone"). Nothing else.`;
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 20,

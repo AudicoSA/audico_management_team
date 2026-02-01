@@ -2,10 +2,15 @@ import OpenAI from "openai";
 import { getSupabaseServer } from "./supabase";
 import type { Product, SearchFilters, ComponentType } from "./types";
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+// Lazy initialization to avoid build-time errors when API key isn't available
+let openaiClient: OpenAI | null = null;
+
+function getOpenAI(): OpenAI {
+  if (!openaiClient) {
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
+  }
+  return openaiClient;
+}
 
 /**
  * Fixed search queries for each component type
@@ -155,7 +160,7 @@ const BUDGET_ALLOCATION: Record<ComponentType, { min: number; max: number }> = {
  * Generate embedding for a search query using OpenAI
  */
 async function generateEmbedding(query: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: "text-embedding-3-small",
     input: query,
   });

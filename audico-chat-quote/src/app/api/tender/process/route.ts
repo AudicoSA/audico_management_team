@@ -9,9 +9,15 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { matchTenderItems, type ExtractedItem } from "@/lib/ai/tender-matcher";
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialization to avoid build-time errors
+let openaiClient: OpenAI | null = null;
+
+function getOpenAI(): OpenAI {
+    if (!openaiClient) {
+        openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
+    }
+    return openaiClient;
+}
 
 // System prompt for product extraction
 const EXTRACTION_PROMPT = `You are an expert at reading tender documents, BOMs (Bill of Materials), and product specifications for audio/video equipment.
@@ -78,7 +84,7 @@ export async function POST(request: NextRequest) {
             },
         };
 
-        const visionResponse = await openai.chat.completions.create({
+        const visionResponse = await getOpenAI().chat.completions.create({
             model: "gpt-4o",
             max_tokens: 4000,
             messages: [

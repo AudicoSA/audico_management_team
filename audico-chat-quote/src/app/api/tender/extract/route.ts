@@ -8,9 +8,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialization to avoid build-time errors
+let openaiClient: OpenAI | null = null;
+
+function getOpenAI(): OpenAI {
+    if (!openaiClient) {
+        openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
+    }
+    return openaiClient;
+}
 
 // System prompt for product extraction
 const EXTRACTION_PROMPT = `You are an expert at reading tender documents, BOMs (Bill of Materials), and product specifications for audio/video equipment.
@@ -83,7 +89,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Call OpenAI Vision
-        const response = await openai.chat.completions.create({
+        const response = await getOpenAI().chat.completions.create({
             model: "gpt-4o", // GPT-4o has excellent vision capabilities
             max_tokens: 4000,
             messages: [
