@@ -37,6 +37,7 @@ export default function NewProductsPage() {
     }, [supabase])
 
     const fetchProducts = async () => {
+        if (!supabase) return;
         try {
             const { data, error } = await supabase
                 .from('new_products_queue')
@@ -71,7 +72,7 @@ export default function NewProductsPage() {
     }
 
     const handleApprove = async () => {
-        if (selected.size === 0) return
+        if (selected.size === 0 || !supabase) return
         setProcessing(true)
         try {
             const { error } = await supabase
@@ -91,7 +92,7 @@ export default function NewProductsPage() {
     }
 
     const handleRemove = async () => {
-        if (selected.size === 0) return
+        if (selected.size === 0 || !supabase) return
         if (!confirm('Are you sure you want to remove these products from the queue?')) return
 
         setProcessing(true)

@@ -26,6 +26,7 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase) return;
     setIsLoading(true);
     setError(null);
 
