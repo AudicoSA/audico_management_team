@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useState } from 'react'
 import { Link2, Box, BarChart2, Truck, Upload, LogOut, LayoutDashboard, Settings, ShoppingCart, Package, Bot, FileText, Rss } from 'lucide-react'
 import { usePathname } from 'next/navigation'

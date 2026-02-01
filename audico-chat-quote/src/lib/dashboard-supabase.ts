@@ -1,18 +1,24 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// Lazy initialization to prevent build-time crashes when env vars are not available
+let _supabase: SupabaseClient | null = null
 
-// Debug logging
-if (typeof window !== 'undefined') {
-    console.log('🔧 Supabase Config:', {
-        url: supabaseUrl,
-        hasKey: !!supabaseAnonKey,
-        keyPrefix: supabaseAnonKey?.substring(0, 20) + '...'
-    })
+export const supabase = {
+    get instance(): SupabaseClient {
+        if (!_supabase) {
+            const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+            const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+            if (!supabaseUrl || !supabaseAnonKey) {
+                throw new Error('Missing Supabase environment variables')
+            }
+
+            _supabase = createClient(supabaseUrl, supabaseAnonKey)
+        }
+        return _supabase
+    },
+    from: (table: string) => supabase.instance.from(table),
 }
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export type EmailLog = {
     id: string

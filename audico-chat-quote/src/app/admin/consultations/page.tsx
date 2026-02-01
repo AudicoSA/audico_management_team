@@ -2,6 +2,8 @@ import { getSupabaseServer } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import { ConsultationListTable } from "@/components/admin/ConsultationListTable";
 
+export const dynamic = "force-dynamic";
+
 export default async function ConsultationsPage() {
   const supabase = getSupabaseServer();
 

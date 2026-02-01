@@ -1,5 +1,7 @@
 'use client'
 
+export const dynamic = "force-dynamic";
+
 import { createBrowserClient } from '@supabase/ssr'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -232,9 +234,9 @@ export default function NewProductsPage() {
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap">
                                                     <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${product.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
-                                                            product.status === 'approved' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                                                                product.status === 'approved_pending' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                                                                    'bg-gray-500/20 text-gray-400 border-gray-500/30'
+                                                        product.status === 'approved' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                                            product.status === 'approved_pending' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                                                'bg-gray-500/20 text-gray-400 border-gray-500/30'
                                                         }`}>
                                                         {product.status === 'approved_pending' ? 'Processing...' : product.status}
                                                     </span>
