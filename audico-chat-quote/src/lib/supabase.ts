@@ -1,32 +1,53 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-// Environment variables
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing Supabase environment variables. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY"
-  );
-}
+// Environment variables - read at runtime, not build time
+const getSupabaseUrl = () => process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const getSupabaseAnonKey = () => process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const getSupabaseServiceKey = () => process.env.SUPABASE_SERVICE_KEY || "";
 
 /**
- * Supabase client for client-side use (browser)
+ * Lazy-initialized Supabase client for client-side use (browser)
  * Uses anon key with RLS
  */
-export const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+let _supabaseClient: SupabaseClient | null = null;
+
+export const supabaseClient = {
+  get instance(): SupabaseClient {
+    if (!_supabaseClient) {
+      const url = getSupabaseUrl();
+      const key = getSupabaseAnonKey();
+      if (!url || !key) {
+        throw new Error(
+          "Missing Supabase environment variables. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY"
+        );
+      }
+      _supabaseClient = createClient(url, key);
+    }
+    return _supabaseClient;
+  },
+  // Proxy common methods for backwards compatibility
+  from: (table: string) => supabaseClient.instance.from(table),
+  auth: {
+    get signOut() { return supabaseClient.instance.auth.signOut.bind(supabaseClient.instance.auth); },
+    get getUser() { return supabaseClient.instance.auth.getUser.bind(supabaseClient.instance.auth); },
+    get getSession() { return supabaseClient.instance.auth.getSession.bind(supabaseClient.instance.auth); },
+  },
+};
 
 /**
  * Supabase client for server-side use (API routes)
  * Uses service key to bypass RLS
  */
 export function getSupabaseServer() {
-  if (!supabaseServiceKey) {
+  const serviceKey = getSupabaseServiceKey();
+  const url = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+
+  if (!serviceKey) {
     console.warn("SUPABASE_SERVICE_KEY not set, using anon key");
-    return createClient(supabaseUrl, supabaseAnonKey);
+    return createClient(url, anonKey);
   }
-  return createClient(supabaseUrl, supabaseServiceKey);
+  return createClient(url, serviceKey);
 }
 
 /**
