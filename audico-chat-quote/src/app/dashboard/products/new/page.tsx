@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import { createBrowserClient } from '@supabase/ssr'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 
 interface NewProduct {
@@ -23,14 +23,18 @@ export default function NewProductsPage() {
     const [selected, setSelected] = useState<Set<string>>(new Set())
     const [processing, setProcessing] = useState(false)
 
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
+    // Only create Supabase client on the client side
+    const supabase = useMemo(() => {
+        if (typeof window === "undefined") return null;
+        return createBrowserClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
+    }, []);
 
     useEffect(() => {
-        fetchProducts()
-    }, [])
+        if (supabase) fetchProducts()
+    }, [supabase])
 
     const fetchProducts = async () => {
         try {

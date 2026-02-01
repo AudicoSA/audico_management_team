@@ -1,7 +1,26 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
+// Check if we're in a browser environment
+const isBrowser = typeof window !== "undefined";
+
 // Lazy initialization to prevent build-time crashes when env vars are not available
 let _supabase: SupabaseClient | null = null
+
+// No-op query builder for SSR - returns empty data
+const noopQueryBuilder = {
+    select: () => noopQueryBuilder,
+    insert: () => noopQueryBuilder,
+    update: () => noopQueryBuilder,
+    delete: () => noopQueryBuilder,
+    eq: () => noopQueryBuilder,
+    neq: () => noopQueryBuilder,
+    in: () => noopQueryBuilder,
+    order: () => noopQueryBuilder,
+    limit: () => noopQueryBuilder,
+    single: () => noopQueryBuilder,
+    maybeSingle: () => noopQueryBuilder,
+    then: (resolve: any) => resolve({ data: null, error: null }),
+};
 
 export const supabase = {
     get instance(): SupabaseClient {
@@ -17,7 +36,13 @@ export const supabase = {
         }
         return _supabase
     },
-    from: (table: string) => supabase.instance.from(table),
+    from: (table: string) => {
+        if (!isBrowser) {
+            // During SSR, return no-op to allow pre-rendering
+            return noopQueryBuilder as any;
+        }
+        return supabase.instance.from(table);
+    },
 }
 
 export type EmailLog = {

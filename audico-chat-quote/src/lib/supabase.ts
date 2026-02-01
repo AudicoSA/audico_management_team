@@ -5,11 +5,31 @@ const getSupabaseUrl = () => process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const getSupabaseAnonKey = () => process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const getSupabaseServiceKey = () => process.env.SUPABASE_SERVICE_KEY || "";
 
+// Check if we're in a browser environment
+const isBrowser = typeof window !== "undefined";
+
 /**
  * Lazy-initialized Supabase client for client-side use (browser)
  * Uses anon key with RLS
+ * Returns no-op during SSR to allow pre-rendering without env vars
  */
 let _supabaseClient: SupabaseClient | null = null;
+
+// No-op query builder for SSR - returns empty data
+const noopQueryBuilder = {
+  select: () => noopQueryBuilder,
+  insert: () => noopQueryBuilder,
+  update: () => noopQueryBuilder,
+  delete: () => noopQueryBuilder,
+  eq: () => noopQueryBuilder,
+  neq: () => noopQueryBuilder,
+  in: () => noopQueryBuilder,
+  order: () => noopQueryBuilder,
+  limit: () => noopQueryBuilder,
+  single: () => noopQueryBuilder,
+  maybeSingle: () => noopQueryBuilder,
+  then: (resolve: any) => resolve({ data: null, error: null }),
+};
 
 export const supabaseClient = {
   get instance(): SupabaseClient {
@@ -25,12 +45,27 @@ export const supabaseClient = {
     }
     return _supabaseClient;
   },
-  // Proxy common methods for backwards compatibility
-  from: (table: string) => supabaseClient.instance.from(table),
+  // Proxy common methods - returns no-op during SSR
+  from: (table: string) => {
+    if (!isBrowser) {
+      // During SSR, return no-op to allow pre-rendering
+      return noopQueryBuilder as any;
+    }
+    return supabaseClient.instance.from(table);
+  },
   auth: {
-    get signOut() { return supabaseClient.instance.auth.signOut.bind(supabaseClient.instance.auth); },
-    get getUser() { return supabaseClient.instance.auth.getUser.bind(supabaseClient.instance.auth); },
-    get getSession() { return supabaseClient.instance.auth.getSession.bind(supabaseClient.instance.auth); },
+    get signOut() {
+      if (!isBrowser) return () => Promise.resolve({ error: null });
+      return supabaseClient.instance.auth.signOut.bind(supabaseClient.instance.auth);
+    },
+    get getUser() {
+      if (!isBrowser) return () => Promise.resolve({ data: { user: null }, error: null });
+      return supabaseClient.instance.auth.getUser.bind(supabaseClient.instance.auth);
+    },
+    get getSession() {
+      if (!isBrowser) return () => Promise.resolve({ data: { session: null }, error: null });
+      return supabaseClient.instance.auth.getSession.bind(supabaseClient.instance.auth);
+    },
   },
 };
 
