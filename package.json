@@ -1,0 +1,9 @@
+{
+    "name": "root",
+    "private": true,
+    "scripts": {
+        "postinstall": "cd audico-chat-quote && npm install",
+        "build": "cd audico-chat-quote && npm run build",
+        "start": "cd audico-chat-quote && npm start"
+    }
+}

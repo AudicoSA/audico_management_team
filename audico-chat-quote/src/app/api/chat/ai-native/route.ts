@@ -12,6 +12,8 @@ import { ClaudeConversationHandler } from "@/lib/ai/claude-handler";
 import { OpenAIConversationHandler } from "@/lib/ai/openai-handler";
 import { v4 as uuidv4 } from "uuid";
 
+export const dynamic = "force-dynamic";
+
 // Choose AI provider based on environment variable
 // Set AI_PROVIDER=openai in .env.local to use OpenAI/GPT-4
 // Default is Claude (anthropic)
