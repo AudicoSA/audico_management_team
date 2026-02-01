@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react'
-import { Link2, Box, BarChart2, Truck, Upload, LogOut, LayoutDashboard, Settings } from 'lucide-react'
+import { Link2, Box, BarChart2, Truck, Upload, LogOut, LayoutDashboard, Settings, ShoppingCart, Package, Bot, FileText, Rss } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
@@ -21,9 +21,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const navigation = [
         { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+        { name: 'Products', href: '/dashboard/products', icon: Package },
+        { name: 'Orders', href: '/dashboard/orders', icon: ShoppingCart },
         { name: 'Alignment', href: '/dashboard/alignment', icon: Link2 },
         { name: 'Stock Updates', href: '/dashboard/stock', icon: BarChart2 },
-        // Add more items as we migrate them
+        { name: "Kait's Desk", href: '/dashboard/kait', icon: Bot },
+        { name: 'Logs', href: '/dashboard/logs', icon: FileText },
+        { name: 'Feeds', href: '/dashboard/feeds', icon: Rss },
     ]
 
     return (

@@ -6,40 +6,40 @@ export default function ProductsPage() {
             title: '🆕 New Products Discovery',
             description: 'Review and approve new products found in supplier pricelists.',
             href: '/dashboard/products/new',
-            color: 'bg-blue-50 text-blue-700',
+            color: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
             icon: '✨'
         },
         {
             title: '📝 Price Changes',
             description: 'Review and approve price changes detected from suppliers.',
             href: '/dashboard/products/review',
-            color: 'bg-yellow-50 text-yellow-700',
+            color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
             icon: '💰'
         },
         {
             title: '📤 Import Pricelist',
             description: 'Upload new supplier pricelists (PDF, Excel, CSV).',
             href: '/dashboard/products/import',
-            color: 'bg-green-50 text-green-700',
+            color: 'bg-green-500/20 text-green-400 border-green-500/30',
             icon: '📁'
         },
         {
             title: '⚠️ Duplicates',
             description: 'Manage and merge duplicate products.',
             href: '/dashboard/products/duplicates',
-            color: 'bg-red-50 text-red-700',
+            color: 'bg-red-500/20 text-red-400 border-red-500/30',
             icon: '🔄'
         }
     ]
 
     return (
-        <div className="py-10">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="p-6 bg-[#0a0a0a] min-h-full">
+            <div className="max-w-7xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <h1 className="text-3xl font-bold text-white">Product Management</h1>
                     <Link
                         href="/dashboard/feeds"
-                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        className="inline-flex items-center px-4 py-2 border border-white/10 text-sm font-medium rounded-lg shadow-sm text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
                     >
                         <span className="mr-2">🔌</span>
                         Manage Feeds
@@ -53,21 +53,21 @@ export default function ProductsPage() {
                             href={section.href}
                             className="block group"
                         >
-                            <div className="glass overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow duration-200 border border-white/10 h-full">
+                            <div className="bg-[#111] overflow-hidden shadow-xl rounded-xl hover:shadow-2xl transition-all duration-200 border border-white/10 h-full hover:border-white/20">
                                 <div className="p-6 flex items-start space-x-4">
-                                    <div className={`flex-shrink-0 p-3 rounded-lg ${section.color} text-2xl`}>
+                                    <div className={`flex-shrink-0 p-3 rounded-lg border ${section.color} text-2xl`}>
                                         {section.icon}
                                     </div>
                                     <div className="flex-1">
                                         <h3 className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors">
                                             {section.title}
                                         </h3>
-                                        <p className="mt-1 text-sm text-slate-400">
+                                        <p className="mt-1 text-sm text-gray-400">
                                             {section.description}
                                         </p>
                                     </div>
                                     <div className="self-center">
-                                        <svg className="h-5 w-5 text-slate-500 group-hover:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <svg className="h-5 w-5 text-gray-600 group-hover:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                                         </svg>
                                     </div>
