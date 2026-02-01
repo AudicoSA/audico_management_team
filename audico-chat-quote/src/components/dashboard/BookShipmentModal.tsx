@@ -72,9 +72,9 @@ export default function BookShipmentModal({ isOpen, onClose, onConfirm, orderId,
             setSuppliers(data)
 
             if (preselectName) {
-                let match = data.find(s => s.name.toLowerCase() === preselectName.toLowerCase())
-                if (!match) match = data.find(s => s.company?.toLowerCase() === preselectName.toLowerCase())
-                if (!match) match = data.find(s => s.name.toLowerCase().includes(preselectName.toLowerCase()))
+                let match = data.find((s: Supplier) => s.name.toLowerCase() === preselectName.toLowerCase())
+                if (!match) match = data.find((s: Supplier) => s.company?.toLowerCase() === preselectName.toLowerCase())
+                if (!match) match = data.find((s: Supplier) => s.name.toLowerCase().includes(preselectName.toLowerCase()))
 
                 if (match) {
                     setSelectedSupplierId(match.id)
