@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase";
 
+export const dynamic = "force-dynamic";
 /**
  * GET /api/admin/categories
  * Returns all distinct category_name values from the products table

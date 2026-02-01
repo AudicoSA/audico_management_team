@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase";
 
+export const dynamic = "force-dynamic";
 /**
  * API endpoint to fix the quotes table schema
  * This adds missing columns if they don't exist
