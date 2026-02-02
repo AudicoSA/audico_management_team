@@ -232,7 +232,7 @@ This helps build the quote and maintain context of the solution you're building.
           description: "Brief explanation of why this product (for quote notes)",
         },
       },
-      required: ["quote_id", "sku"],
+      required: ["sku"],
     },
   },
   {
@@ -248,7 +248,7 @@ USE WHEN:
       properties: {
         quote_id: {
           type: "string",
-          description: "Quote ID to update",
+          description: "Quote ID to update (optional - will use current context if omitted)",
         },
         updates: {
           type: "object",
@@ -269,7 +269,7 @@ USE WHEN:
           },
         },
       },
-      required: ["quote_id", "updates"],
+      required: ["updates"],
     },
   },
   {

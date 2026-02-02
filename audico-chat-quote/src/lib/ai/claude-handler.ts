@@ -782,10 +782,32 @@ export class ClaudeConversationHandler {
   }
 
   private async handleAddToQuote(input: Record<string, unknown>): Promise<ToolResult> {
-    const quote_id = input.quote_id as string;
+    let quote_id = input.quote_id as string | undefined;
     const sku = input.sku as string;
     const quantity = (input.quantity as number) || 1;
     const reason = input.reason as string | undefined;
+
+    // Resolve quote ID logic
+    if (!quote_id) {
+      quote_id = this.context.currentQuoteId;
+    }
+
+    if (!quote_id) {
+      console.log("[ClaudeHandler] ⚠️ No quote ID found for add_to_quote - performing IMPLICIT creation");
+      try {
+        // Auto-create a "simple" quote so we can add the item
+        quote_id = await this.quoteManager.createQuote(
+          this.context.sessionId,
+          "simple",
+          { budget_total: 0, notes: "Implicitly created via add_to_quote" }
+        );
+        this.context.currentQuoteId = quote_id;
+        console.log(`[ClaudeHandler] ✅ Implicitly created quote: ${quote_id}`);
+      } catch (e: any) {
+        console.error("[ClaudeHandler] Failed to implicitly create quote:", e);
+        return { success: false, error: "Failed to create quote context to add this item." };
+      }
+    }
 
     const result = await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
 
@@ -797,7 +819,16 @@ export class ClaudeConversationHandler {
   }
 
   private async handleUpdateQuote(input: Record<string, unknown>): Promise<ToolResult> {
-    const quote_id = input.quote_id as string;
+    let quote_id = input.quote_id as string | undefined;
+
+    // Resolve quote ID logic
+    if (!quote_id) {
+      quote_id = this.context.currentQuoteId;
+    }
+
+    if (!quote_id) {
+      return { success: false, error: "No active quote to update. Please create a quote first." };
+    }
     const updates = input.updates as any;
 
     const result = await this.quoteManager.updateQuote(quote_id, updates);
