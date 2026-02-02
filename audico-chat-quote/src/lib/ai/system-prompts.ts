@@ -714,6 +714,29 @@ You: [call provide_final_recommendation with 3-4 speaker package options]
 - Search → provide_final_recommendation → Wait for choice
 - NEVER skip provide_final_recommendation after searching!
 
+## LIVE QUOTE UPDATES (MANDATORY)
+
+**CRITICAL RULE:** You must maintain a LIVE quote that updates in real-time.
+
+1️⃣ **CREATE QUOTE EARLY**
+   - If a quote doesn't exist (check context), create one immediately when the user signals intent to buy or design a system.
+   - Call `create_quote` at the start of the process.
+
+2️⃣ **ADD ITEMS IMMEDIATELY**
+   - As soon as the user selects a product (e.g., "I'll take the Denon"), **IMMEDIATELY call `add_to_quote`**.
+   - **DO NOT WAIT** until the end of the conversation to add items.
+   - **DO NOT BATCH** additions. Add them one by one as they are chosen.
+   - This ensures the customer sees the running total on their screen.
+
+3️⃣ **VERIFY UPDATE**
+   - After adding, confirm: "I've added the [Product] to your live quote context."
+
+❌ **WRONG:** Waiting until all 5 components are chosen before calling `add_to_quote`.
+✅ **CORRECT:**
+   - User picks AVR → `add_to_quote(AVR)`
+   - User picks Speakers → `add_to_quote(Speakers)`
+   - User picks Sub → `add_to_quote(Sub)`
+
 ---
 
 Remember: You're not a keyword matcher. You're an intelligent sales consultant who UNDERSTANDS what customers need and RECOMMENDS the right solutions. Every customer should feel like they're talking to Audico's best salesperson.`;
@@ -761,34 +784,34 @@ Is there anything else you'd like me to note for the specialist team?`;
 
 // Information Gathering Questions for Escalations
 export const ESCALATION_QUESTIONS = {
-  contact: [
-    "What's your name?",
-    "What's the best email to send the proposal to?",
-    "Phone number for follow-up?",
-    "Company name?" // if commercial
-  ],
-  projectOverview: [
-    "Is this for a residential property or commercial space?",
-    "What's your total budget for the project?",
-    "Any timeline or urgency? (renovation, new build, urgent need, flexible)",
-    "What's the primary use case?"
-  ],
-  perZone: [
-    "What's the room name and location?",
-    "Room dimensions (length x width x height)? Or approximate size?",
-    "What will this zone be used for?",
-    "Any existing equipment in this zone to integrate?"
-  ],
-  technical: [
-    "Do you have any existing AV equipment we should integrate with?",
-    "What's the wiring/infrastructure status?",
-    "How would you like to control the system?",
-    "Any architectural or technical constraints?"
-  ],
-  additional: [
-    "Why now? What triggered this project?",
-    "Professional installation or DIY?",
-    "Any brand preferences or products you've researched?",
-    "Anything else about the project I should know?"
-  ]
+   contact: [
+      "What's your name?",
+      "What's the best email to send the proposal to?",
+      "Phone number for follow-up?",
+      "Company name?" // if commercial
+   ],
+   projectOverview: [
+      "Is this for a residential property or commercial space?",
+      "What's your total budget for the project?",
+      "Any timeline or urgency? (renovation, new build, urgent need, flexible)",
+      "What's the primary use case?"
+   ],
+   perZone: [
+      "What's the room name and location?",
+      "Room dimensions (length x width x height)? Or approximate size?",
+      "What will this zone be used for?",
+      "Any existing equipment in this zone to integrate?"
+   ],
+   technical: [
+      "Do you have any existing AV equipment we should integrate with?",
+      "What's the wiring/infrastructure status?",
+      "How would you like to control the system?",
+      "Any architectural or technical constraints?"
+   ],
+   additional: [
+      "Why now? What triggered this project?",
+      "Professional installation or DIY?",
+      "Any brand preferences or products you've researched?",
+      "Anything else about the project I should know?"
+   ]
 };
