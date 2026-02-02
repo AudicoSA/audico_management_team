@@ -33,7 +33,6 @@ const menuItems: NavItem[] = [
 const toolItems: NavItem[] = [
   { icon: <Settings size={20} />, label: "Settings", href: "/settings" },
   { icon: <HelpCircle size={20} />, label: "Help", href: "/help" },
-  { icon: <Zap size={20} />, label: "Admin", href: "/login" },
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
