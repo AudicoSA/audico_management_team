@@ -3,7 +3,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 // Environment variables - read at runtime, not build time
 const getSupabaseUrl = () => process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const getSupabaseAnonKey = () => process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const getSupabaseServiceKey = () => process.env.SUPABASE_SERVICE_KEY || "";
+const getSupabaseServiceKey = () => process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 // Check if we're in a browser environment
 const isBrowser = typeof window !== "undefined";
