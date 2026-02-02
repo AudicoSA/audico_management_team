@@ -24,41 +24,22 @@ export default function Home() {
   });
 
   const handleRemoveItem = async (productId: string) => {
-    // ... items removal logic ...
-    if (!quoteId) {
-      console.warn("[Home] Cannot remove item - no quote ID");
-      return;
-    }
+    // Remove item from local state immediately (client-side removal works always)
+    setQuoteItems((prev) => prev.filter((item) => item.productId !== productId));
+    console.log(`[Home] Removed product ${productId} from quote (client-side)`);
 
-    try {
-      const response = await fetch("/api/quote/remove", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          quoteId,
-          productId,
-          sessionId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.error) {
-        console.error("[Home] Remove error:", data.error);
-        return;
+    // Optionally try to sync with backend (may fail for AI-native quotes, which is OK)
+    if (quoteId) {
+      try {
+        await fetch("/api/quote/remove", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quoteId, productId, sessionId }),
+        });
+      } catch (error) {
+        // Silently ignore - client-side state already updated
+        console.log("[Home] Backend sync skipped (expected for AI-native flow)");
       }
-
-      // Update quote items
-      if (data.quoteItems) {
-        setQuoteItems(data.quoteItems);
-      }
-
-      // If critical component removed, the message will be handled by the backend
-      // In a full implementation, we'd trigger a chat message here
-      console.log(`[Home] Removed: ${data.removedProduct?.name}, Critical: ${data.isCritical}`);
-
-    } catch (error) {
-      console.error("[Home] Remove error:", error);
     }
   };
 
