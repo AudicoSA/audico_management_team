@@ -40,7 +40,17 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [isProcessingTender, setIsProcessingTender] = useState(false);
   // Persist sessionId across all messages in this conversation to maintain agent context
-  const [sessionId] = useState(() => generateId());
+  // Use localStorage if available to survive page refreshes
+  const [sessionId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('audico_session_id');
+      if (stored) return stored;
+      const newId = generateId();
+      localStorage.setItem('audico_session_id', newId);
+      return newId;
+    }
+    return generateId();
+  });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastMessageRef = useRef<HTMLDivElement>(null);

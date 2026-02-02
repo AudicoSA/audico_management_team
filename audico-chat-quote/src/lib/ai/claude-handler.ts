@@ -210,7 +210,6 @@ export class ClaudeConversationHandler {
   /**
    * Load conversation history from database
    * Called in constructor to restore previous conversation
-   * TEMPORARILY DISABLED due to network connectivity issues
    */
   private async loadConversationHistoryFromDB(): Promise<void> {
     try {
@@ -240,7 +239,6 @@ export class ClaudeConversationHandler {
   /**
    * Save a message to the database
    * Called after each user/assistant message to persist conversation
-   * TEMPORARILY DISABLED due to network connectivity issues
    */
   private async saveMessage(
     role: "user" | "assistant",
