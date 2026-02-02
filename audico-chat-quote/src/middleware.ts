@@ -96,7 +96,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // '/admin/:path*', // TEMPORARILY DISABLED AUTH
+    '/admin/:path*',
     // You can add other protected routes here
   ],
 };
