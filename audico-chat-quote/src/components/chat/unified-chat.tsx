@@ -10,7 +10,7 @@ import { TenderResults } from "../tender/tender-results";
 import type { ChatMessage, Product, Step, QuoteItem, ConsultationRequestSummary } from "@/lib/types";
 
 interface UnifiedChatProps {
-  onQuoteUpdate: (items: QuoteItem[]) => void;
+  onQuoteUpdate: (items: QuoteItem[], quoteId?: string) => void;
 }
 
 // Generate a simple ID without external dependencies
@@ -156,7 +156,7 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
 
         if (data.quoteId) setQuoteId(data.quoteId);
         if (data.products) setCurrentProducts(data.products);
-        if (data.quoteItems) onQuoteUpdate(data.quoteItems);
+        if (data.quoteItems) onQuoteUpdate(data.quoteItems, data.quoteId || quoteId || undefined);
 
         addMessage("assistant", data.message, data.products);
         return;
@@ -191,7 +191,7 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
       if (data.currentStep) setCurrentStep(data.currentStep);
       if (data.products) setCurrentProducts(data.products);
       if (data.quoteItems || data.selectedProducts) {
-        onQuoteUpdate(data.quoteItems || data.selectedProducts);
+        onQuoteUpdate(data.quoteItems || data.selectedProducts, quoteId || undefined);
       }
       if (data.isComplete) {
         setCurrentProducts([]);
