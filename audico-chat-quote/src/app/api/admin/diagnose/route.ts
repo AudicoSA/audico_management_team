@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
             SUPABASE_URL_SET: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
             SUPABASE_ANON_KEY_SET: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
             SUPABASE_SERVICE_KEY_SET: !!process.env.SUPABASE_SERVICE_KEY || !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+            ANTHROPIC_API_KEY_SET: !!process.env.ANTHROPIC_API_KEY,
         },
         write_test: null,
     };
