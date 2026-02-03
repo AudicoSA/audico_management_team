@@ -14,7 +14,7 @@ import { ProductSearchEngine } from "./product-search-engine";
 import { QuoteManager } from "./quote-manager";
 import { SystemDesignEngine } from "@/lib/flows/system-design/engine";
 import { getSupabaseServer } from "@/lib/supabase";
-import type { Product } from "@/lib/types";
+import type { Product, Quote, QuoteItem } from "@/lib/types";
 import { analyzeComplexity, type ComplexityAnalysis, explainComplexity } from "./complexity-detector";
 import { consultationRequestManager } from "./consultation-request-manager";
 
@@ -612,10 +612,20 @@ export class ClaudeConversationHandler {
         console.error("[ClaudeHandler] Full error:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
       } catch { /* ignore serialization error */ }
 
+      let quoteItems: QuoteItem[] = [];
+      if (this.context.currentQuoteId) {
+        try {
+          quoteItems = await this.quoteManager.getQuoteItems(this.context.currentQuoteId);
+        } catch (qErr) {
+          console.error("[ClaudeHandler] Failed to recover quote items in error handler:", qErr);
+        }
+      }
+
       const errorMsg = error?.message || "Unknown error";
       return {
         message: `I apologize, I encountered an issue (${errorMsg}). Could you please rephrase your request?`,
         products: [],
+        quoteItems, // Ensure sidebar updates even on error
       };
     }
   }

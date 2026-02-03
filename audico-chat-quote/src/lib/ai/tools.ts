@@ -14,7 +14,7 @@ export const AI_TOOLS: Anthropic.Tool[] = [
 
 CATEGORIES:
 - "home_cinema" - Home theater systems, AVRs, passive speakers, subwoofers for 5.1/7.1/Atmos
-- "commercial_bgm" - Restaurant/retail background music (ceiling speakers, streaming amps)
+- "commercial_bgm" - Ceiling speakers & Distributed Audio (Background music for homes, kitchens, restaurants, retail)
 - "commercial_loud" - Gym/fitness/club high-output audio (PA speakers, commercial amps)
 - "video_conference" - Meeting room solutions (video bars, room systems, speakerphones)
 - "worship" - Church/venue sound reinforcement
