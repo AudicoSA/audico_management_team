@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
     console.log(`[UpdateQuantity API] Updating product ${productId} in quote ${quoteId} to quantity ${quantity}`);
 
-    const quoteManager = QuoteManager.getInstance();
+    const quoteManager = new QuoteManager();
 
     // If quantity is 0, remove the product
     if (quantity === 0) {
