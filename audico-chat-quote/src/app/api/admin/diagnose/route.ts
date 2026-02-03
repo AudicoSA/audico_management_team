@@ -22,10 +22,10 @@ export async function GET(req: NextRequest) {
         const { error: writeError } = await supabase.from("quotes").insert({
             id: testId,
             session_id: "diagnostic-test",
-            flow_type: "diagnostic",
+            flow_type: "simple_quote",
             requirements: {},
             selected_products: [],
-            status: "diagnostic",
+            status: "in_progress",
         });
 
         if (writeError) {

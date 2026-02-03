@@ -771,7 +771,25 @@ export class ClaudeConversationHandler {
     const quote_type = input.quote_type as string;
     const requirements = input.requirements as any;
 
-    const quoteId = await this.quoteManager.createQuote(this.context.sessionId, quote_type, requirements);
+    // Map AI tools types to DB FlowType
+    // Tool Types: "home_cinema", "commercial_bgm", "video_conference", "simple"
+    // DB Types: "system_design", "simple_quote", "tender"
+
+    let dbFlowType = "simple_quote";
+    if (quote_type === "simple") {
+      dbFlowType = "simple_quote";
+    } else if (["home_cinema", "commercial_bgm", "commercial_loud", "video_conference", "worship"].includes(quote_type)) {
+      dbFlowType = "system_design";
+      // Store the specific subtype in requirements for UI rendering
+      if (!requirements.type) {
+        requirements.type = quote_type;
+      }
+    } else {
+      // Fallback for unknown types (e.g. tender)
+      dbFlowType = "simple_quote";
+    }
+
+    const quoteId = await this.quoteManager.createQuote(this.context.sessionId, dbFlowType, requirements);
     this.context.currentQuoteId = quoteId;
 
     return {
@@ -798,7 +816,7 @@ export class ClaudeConversationHandler {
         // Auto-create a "simple" quote so we can add the item
         quote_id = await this.quoteManager.createQuote(
           this.context.sessionId,
-          "simple",
+          "simple_quote", // FIXED: "simple" -> "simple_quote" to match DB constraint
           { budget_total: 0, notes: "Implicitly created via add_to_quote" }
         );
         this.context.currentQuoteId = quote_id;
