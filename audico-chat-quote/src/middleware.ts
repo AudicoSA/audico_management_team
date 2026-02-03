@@ -61,6 +61,14 @@ export async function middleware(request: NextRequest) {
 
   // Check if accessing admin routes
   if (request.nextUrl.pathname.startsWith('/admin')) {
+
+    // 1. Check for Simple Auth Cookie (Bypass)
+    const simpleAuth = request.cookies.get('audico_admin_access');
+    if (simpleAuth?.value === 'true') {
+      return response; // Allow access
+    }
+
+    // 2. Fallback to Supabase Auth
     // Get authenticated user
     const {
       data: { session },

@@ -26,9 +26,31 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supabase) return;
     setIsLoading(true);
     setError(null);
+
+    // 1. Try Simple Auth First
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+
+      if (res.ok) {
+        router.push("/admin/quotes");
+        router.refresh();
+        return;
+      }
+    } catch (ignore) {
+      // Fallback to Supabase
+    }
+
+    // 2. Fallback to Supabase Auth
+    if (!supabase) {
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const { error } = await supabase.auth.signInWithPassword({
@@ -37,6 +59,9 @@ export default function LoginPage() {
       });
 
       if (error) {
+        if (error.message.includes("Invalid login")) {
+          throw new Error("Invalid credentials (checked both Admin Password and User Account)");
+        }
         throw error;
       }
 
