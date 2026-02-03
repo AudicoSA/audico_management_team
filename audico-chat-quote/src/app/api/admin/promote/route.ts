@@ -20,30 +20,47 @@ export async function GET(req: NextRequest) {
 
         const supabase = getSupabaseServer();
 
-        // 1. Find the profile by email
-        // Note: 'profiles' usually has 'id' equal to auth.users.id
-        // But we might not have email in 'profiles' depending on the trigger.
-        // 'profiles' table definition in `supabase.ts` shows `email` column.
-
-        const { data: profile, error: fetchError } = await supabase
+        // 1. Try finding profile directly
+        let { data: profile } = await supabase
             .from("profiles")
             .select("*")
             .eq("email", email)
             .single();
 
-        if (fetchError || !profile) {
-            // Fallback: If profile doesn't have email column populated (rare), try to search auth.users?
-            // Service key can access auth.users via supabase.auth.admin
+        let userId = profile?.id;
 
-            // Let's try to update direct matches first.
-            return NextResponse.json({ error: "Profile not found for this email. Ensure you have logged in at least once.", details: fetchError }, { status: 404 });
+        // 2. If no profile found, look up in Auth (source of truth)
+        if (!userId) {
+            console.log("Profile not found, checking Auth via Admin API...");
+            const { data: { users }, error: authError } = await supabase.auth.admin.listUsers();
+            if (authError) {
+                return NextResponse.json({ error: "Failed to list auth users", details: authError }, { status: 500 });
+            }
+
+            const user = users.find(u => u.email?.toLowerCase() === email.toLowerCase());
+            if (!user) {
+                return NextResponse.json({ error: "User not found in Auth system. Please sign in at least once." }, { status: 404 });
+            }
+            userId = user.id;
+
+            // Create missing profile if needed
+            const { error: insertError } = await supabase.from("profiles").insert({
+                id: userId,
+                email: email,
+                role: 'admin',
+                is_active: true
+            });
+
+            if (!insertError) {
+                return NextResponse.json({ success: true, message: "Created new admin profile for existing user.", userId });
+            }
         }
 
-        // 2. Update role to admin
+        // 3. Update role to admin
         const { error: updateError } = await supabase
             .from("profiles")
             .update({ role: "admin", is_active: true })
-            .eq("id", profile.id);
+            .eq("id", userId);
 
         if (updateError) {
             return NextResponse.json({ error: "Failed to update role", details: updateError }, { status: 500 });
@@ -52,7 +69,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({
             success: true,
             message: `User ${email} promoted to admin.`,
-            profile_id: profile.id,
+            userId: userId,
             new_role: "admin"
         });
 
