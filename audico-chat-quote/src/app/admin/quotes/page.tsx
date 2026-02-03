@@ -1,4 +1,3 @@
-```javascript
 import { getSupabaseServer } from "@/lib/supabase";
 import { QuotesList } from "@/components/admin/quotes-list";
 import { AdminShell } from "@/components/admin/admin-shell";
@@ -11,7 +10,7 @@ export default async function AdminQuotesPage() {
     // Use service key implicitly if configured on server, but getSupabaseServer uses configured logic.
     // We need to fetch ALL quotes.
     // Note: If RLS is enabled and limiting to session, this might return empty if not using Service Role.
-    // In `lib / supabase.ts`, `getSupabaseServer` uses `SUPABASE_SERVICE_KEY` if available.
+    // In `lib/supabase.ts`, `getSupabaseServer` uses `SUPABASE_SERVICE_KEY` if available.
 
     const { data: quotes, error } = await supabase
         .from("quotes")
@@ -24,13 +23,23 @@ export default async function AdminQuotesPage() {
     }
 
     return (
-                            Recent Quotes
-                        </h2>
+        <AdminShell>
+            <div className="w-full h-full flex flex-col p-8 max-w-6xl mx-auto overflow-y-auto">
+                <header className="mb-8">
+                    <h1 className="text-3xl font-bold mb-2">Admin Dashboard</h1>
+                    <p className="text-muted-foreground">
+                        View incoming quotes and fulfillment details.
+                    </p>
+                </header>
 
-                        <QuotesList quotes={quotes || []} />
-                    </div>
+                <div className="bg-card/30 backdrop-blur-sm border border-border rounded-xl p-6 shadow-2xl">
+                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+                        Recent Quotes
+                    </h2>
+
+                    <QuotesList quotes={quotes || []} />
                 </div>
-            </main>
-        </div>
+            </div>
+        </AdminShell>
     );
 }
