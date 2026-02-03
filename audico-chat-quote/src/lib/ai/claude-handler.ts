@@ -222,11 +222,61 @@ export class ClaudeConversationHandler {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        this.context.conversationHistory = data.map(m => ({
+        const rawHistory = data.map(m => ({
           role: m.role as 'user' | 'assistant',
           content: m.content
         }));
-        console.log(`[ClaudeHandler] ✅ Loaded ${data.length} messages from history`);
+
+        // SELF-HEALING: Validate tool_use/tool_result pairing
+        // Anthropic requires every tool_result to have a preceding tool_use
+        const validatedHistory: Anthropic.MessageParam[] = [];
+
+        for (let i = 0; i < rawHistory.length; i++) {
+          const msg = rawHistory[i];
+
+          // Check if this is a user message with tool_results
+          if (msg.role === 'user' && Array.isArray(msg.content)) {
+            const hasToolResult = msg.content.some((b: any) => b.type === 'tool_result');
+
+            if (hasToolResult) {
+              // Look at the previous admitted message
+              const prevMsg = validatedHistory.length > 0 ? validatedHistory[validatedHistory.length - 1] : null;
+
+              if (!prevMsg || prevMsg.role !== 'assistant') {
+                console.warn(`[ClaudeHandler] ⚠️  Dropping orphaned tool_result at index ${i} (no previous assistant message)`);
+                continue; // Skip this message
+              }
+
+              // Verify the previous message has the matching tool_use
+              const toolChoiceIds = new Set<string>();
+              if (Array.isArray(prevMsg.content)) {
+                prevMsg.content.forEach((b: any) => {
+                  if (b.type === 'tool_use') toolChoiceIds.add(b.id);
+                });
+              }
+
+              // Filter out orphan results within the block
+              const validContent = msg.content.filter((b: any) => {
+                if (b.type !== 'tool_result') return true;
+                if (toolChoiceIds.has(b.tool_use_id)) return true;
+
+                console.warn(`[ClaudeHandler] ⚠️  Dropping matched orphan tool_result: ${b.tool_use_id}`);
+                return false;
+              });
+
+              if (validContent.length === 0) {
+                continue; // Skip empty message
+              }
+
+              msg.content = validContent;
+            }
+          }
+
+          validatedHistory.push(msg);
+        }
+
+        this.context.conversationHistory = validatedHistory;
+        console.log(`[ClaudeHandler] ✅ Loaded ${validatedHistory.length} messages from history (healed)`);
       } else {
         console.log('[ClaudeHandler] 📝 No previous conversation history found');
       }
@@ -467,14 +517,14 @@ export class ClaudeConversationHandler {
                 content: response.content,
               });
               // Persist assistant message
-              this.saveMessage("assistant", response.content);
+              await this.saveMessage("assistant", response.content);
 
               this.context.conversationHistory.push({
                 role: "user",
                 content: toolResults,
               });
               // Persist tool results as user message
-              this.saveMessage("user", toolResults);
+              await this.saveMessage("user", toolResults);
 
               let message = input.question;
               if (input.options && input.options.length > 0) {
