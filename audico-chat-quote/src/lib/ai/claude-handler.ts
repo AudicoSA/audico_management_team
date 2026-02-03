@@ -14,7 +14,7 @@ import { ProductSearchEngine } from "./product-search-engine";
 import { QuoteManager } from "./quote-manager";
 import { SystemDesignEngine } from "@/lib/flows/system-design/engine";
 import { getSupabaseServer } from "@/lib/supabase";
-import type { Product, Quote, QuoteItem } from "@/lib/types";
+import type { Product } from "@/lib/types";
 import { analyzeComplexity, type ComplexityAnalysis, explainComplexity } from "./complexity-detector";
 import { consultationRequestManager } from "./consultation-request-manager";
 
@@ -210,6 +210,7 @@ export class ClaudeConversationHandler {
   /**
    * Load conversation history from database
    * Called in constructor to restore previous conversation
+   * TEMPORARILY DISABLED due to network connectivity issues
    */
   private async loadConversationHistoryFromDB(): Promise<void> {
     try {
@@ -222,98 +223,24 @@ export class ClaudeConversationHandler {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        const rawHistory = data.map(m => ({
+        this.context.conversationHistory = data.map(m => ({
           role: m.role as 'user' | 'assistant',
           content: m.content
         }));
-
-        // PASS 1: Self-Healing (Validate tool_use/tool_result pairing)
-        const validatedHistory: Anthropic.MessageParam[] = [];
-
-        for (let i = 0; i < rawHistory.length; i++) {
-          const msg = rawHistory[i];
-
-          if (msg.role === 'user' && Array.isArray(msg.content)) {
-            const hasToolResult = msg.content.some((b: any) => b.type === 'tool_result');
-
-            if (hasToolResult) {
-              const prevMsg = validatedHistory.length > 0 ? validatedHistory[validatedHistory.length - 1] : null;
-
-              if (!prevMsg || prevMsg.role !== 'assistant') {
-                console.warn(`[ClaudeHandler] ⚠️  Dropping orphaned tool_result at index ${i} (no previous assistant message)`);
-                continue;
-              }
-
-              const toolChoiceIds = new Set<string>();
-              if (Array.isArray(prevMsg.content)) {
-                prevMsg.content.forEach((b: any) => {
-                  if (b.type === 'tool_use') toolChoiceIds.add(b.id);
-                });
-              }
-
-              const validContent = msg.content.filter((b: any) => {
-                if (b.type !== 'tool_result') return true;
-                if (toolChoiceIds.has(b.tool_use_id)) return true;
-
-                console.warn(`[ClaudeHandler] ⚠️  Dropping matched orphan tool_result: ${b.tool_use_id}`);
-                return false;
-              });
-
-              if (validContent.length === 0) {
-                continue;
-              }
-
-              msg.content = validContent;
-            }
-          }
-
-          validatedHistory.push(msg);
-        }
-
-        // PASS 2: Sanitize (Handle Unanswered Tool Uses)
-        const finalHistory: Anthropic.MessageParam[] = [];
-        for (let i = 0; i < validatedHistory.length; i++) {
-          const msg = validatedHistory[i];
-
-          if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-            const hasToolUse = msg.content.some((b: any) => b.type === 'tool_use');
-            if (hasToolUse) {
-              const nextMsg = i + 1 < validatedHistory.length ? validatedHistory[i + 1] : null;
-
-              const isFollowedByResult = nextMsg &&
-                nextMsg.role === 'user' &&
-                Array.isArray(nextMsg.content) &&
-                nextMsg.content.some((b: any) => b.type === 'tool_result');
-
-              if (!isFollowedByResult) {
-                console.warn(`[ClaudeHandler] ⚠️  Stripping unclosed tool_use from message ${i}`);
-                const textOnly = msg.content.filter((b: any) => b.type !== 'tool_use');
-
-                if (textOnly.length === 0) {
-                  console.warn(`[ClaudeHandler] 🗑️  Dropping empty assistant message ${i} (was only tool_use)`);
-                  continue;
-                }
-
-                msg.content = textOnly;
-              }
-            }
-          }
-          finalHistory.push(msg);
-        }
-
-        this.context.conversationHistory = finalHistory;
-        console.log(`[ClaudeHandler] ✅ Loaded ${finalHistory.length} messages from history (healed & sanitized)`);
+        console.log(`[ClaudeHandler] ✅ Loaded ${data.length} messages from history`);
       } else {
         console.log('[ClaudeHandler] 📝 No previous conversation history found');
       }
     } catch (error) {
       console.warn('[ClaudeHandler] ⚠️ Non-critical: Failed to load conversation history:', error);
+      // Continue without history - conversation will start fresh
     }
   }
 
   /**
    * Save a message to the database
    * Called after each user/assistant message to persist conversation
+   * TEMPORARILY DISABLED due to network connectivity issues
    */
   private async saveMessage(
     role: "user" | "assistant",
@@ -542,14 +469,14 @@ export class ClaudeConversationHandler {
                 content: response.content,
               });
               // Persist assistant message
-              await this.saveMessage("assistant", response.content);
+              this.saveMessage("assistant", response.content);
 
               this.context.conversationHistory.push({
                 role: "user",
                 content: toolResults,
               });
               // Persist tool results as user message
-              await this.saveMessage("user", toolResults);
+              this.saveMessage("user", toolResults);
 
               let message = input.question;
               if (input.options && input.options.length > 0) {
@@ -636,21 +563,9 @@ export class ClaudeConversationHandler {
       try {
         console.error("[ClaudeHandler] Full error:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
       } catch { /* ignore serialization error */ }
-
-      let quoteItems: QuoteItem[] = [];
-      if (this.context.currentQuoteId) {
-        try {
-          quoteItems = await this.quoteManager.getQuoteItems(this.context.currentQuoteId);
-        } catch (qErr) {
-          console.error("[ClaudeHandler] Failed to recover quote items in error handler:", qErr);
-        }
-      }
-
-      const errorMsg = error?.message || "Unknown error";
       return {
-        message: `I apologize, I encountered an issue (${errorMsg}). Could you please rephrase your request?`,
+        message: "I apologize, I encountered an issue. Could you please rephrase your request?",
         products: [],
-        quoteItems, // Ensure sidebar updates even on error
       };
     }
   }
@@ -858,25 +773,7 @@ export class ClaudeConversationHandler {
     const quote_type = input.quote_type as string;
     const requirements = input.requirements as any;
 
-    // Map AI tools types to DB FlowType
-    // Tool Types: "home_cinema", "commercial_bgm", "video_conference", "simple"
-    // DB Types: "system_design", "simple_quote", "tender"
-
-    let dbFlowType = "simple_quote";
-    if (quote_type === "simple") {
-      dbFlowType = "simple_quote";
-    } else if (["home_cinema", "commercial_bgm", "commercial_loud", "video_conference", "worship"].includes(quote_type)) {
-      dbFlowType = "system_design";
-      // Store the specific subtype in requirements for UI rendering
-      if (!requirements.type) {
-        requirements.type = quote_type;
-      }
-    } else {
-      // Fallback for unknown types (e.g. tender)
-      dbFlowType = "simple_quote";
-    }
-
-    const quoteId = await this.quoteManager.createQuote(this.context.sessionId, dbFlowType, requirements);
+    const quoteId = await this.quoteManager.createQuote(this.context.sessionId, quote_type, requirements);
     this.context.currentQuoteId = quoteId;
 
     return {
@@ -887,64 +784,22 @@ export class ClaudeConversationHandler {
   }
 
   private async handleAddToQuote(input: Record<string, unknown>): Promise<ToolResult> {
-    let quote_id = input.quote_id as string | undefined;
+    const quote_id = input.quote_id as string;
     const sku = input.sku as string;
     const quantity = (input.quantity as number) || 1;
     const reason = input.reason as string | undefined;
 
-    // Resolve quote ID logic
-    if (!quote_id) {
-      quote_id = this.context.currentQuoteId;
-    }
-
-    if (!quote_id) {
-      console.log("[ClaudeHandler] ⚠️ No quote ID found for add_to_quote - performing IMPLICIT creation");
-      try {
-        // Auto-create a "simple" quote so we can add the item
-        quote_id = await this.quoteManager.createQuote(
-          this.context.sessionId,
-          "simple_quote", // FIXED: "simple" -> "simple_quote" to match DB constraint
-          { budget_total: 0, notes: "Implicitly created via add_to_quote" }
-        );
-        this.context.currentQuoteId = quote_id;
-        console.log(`[ClaudeHandler] ✅ Implicitly created quote: ${quote_id}`);
-      } catch (e: any) {
-        console.error("[ClaudeHandler] Failed to implicitly create quote:", e);
-        return { success: false, error: "Failed to create quote context to add this item." };
-      }
-    }
-
     const result = await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
-
-    // SANITIZE RESULT FOR AI CONTEXT
-    // Don't send the full heavy object to Claude, just what it needs
-    const sanitizedResult = {
-      sku: result.product.sku,
-      name: result.product.name,
-      price: result.product.price,
-      quantity: result.quantity,
-      lineTotal: result.lineTotal,
-      quote_id: quote_id,
-    };
 
     return {
       success: true,
-      data: sanitizedResult,
+      data: result,
       message: `Added ${sku} to quote`,
     };
   }
 
   private async handleUpdateQuote(input: Record<string, unknown>): Promise<ToolResult> {
-    let quote_id = input.quote_id as string | undefined;
-
-    // Resolve quote ID logic
-    if (!quote_id) {
-      quote_id = this.context.currentQuoteId;
-    }
-
-    if (!quote_id) {
-      return { success: false, error: "No active quote to update. Please create a quote first." };
-    }
+    const quote_id = input.quote_id as string;
     const updates = input.updates as any;
 
     const result = await this.quoteManager.updateQuote(quote_id, updates);

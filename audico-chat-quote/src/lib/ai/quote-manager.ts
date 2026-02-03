@@ -31,14 +31,6 @@ interface Quote {
 
 export class QuoteManager {
   private quotes: Map<string, Quote> = new Map();
-  private static instance: QuoteManager;
-
-  public static getInstance(): QuoteManager {
-    if (!QuoteManager.instance) {
-      QuoteManager.instance = new QuoteManager();
-    }
-    return QuoteManager.instance;
-  }
 
   /**
    * Create a new quote
@@ -71,7 +63,7 @@ export class QuoteManager {
    * Add a product to a quote
    */
   async addProduct(quoteId: string, sku: string, quantity: number = 1, reason?: string): Promise<QuoteItem> {
-    const quote = await this.getQuote(quoteId);
+    const quote = this.quotes.get(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -133,7 +125,7 @@ export class QuoteManager {
    * Remove a product from a quote
    */
   async removeProduct(quoteId: string, sku: string): Promise<void> {
-    const quote = await this.getQuote(quoteId);
+    const quote = this.quotes.get(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -157,7 +149,7 @@ export class QuoteManager {
    * Update the quantity of a product in the quote
    */
   async updateQuantity(quoteId: string, productId: string, newQuantity: number): Promise<void> {
-    const quote = await this.getQuote(quoteId);
+    const quote = this.quotes.get(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -193,7 +185,7 @@ export class QuoteManager {
    * Update quote requirements or properties
    */
   async updateQuote(quoteId: string, updates: any): Promise<Quote> {
-    const quote = await this.getQuote(quoteId);
+    const quote = this.quotes.get(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -323,27 +315,16 @@ export class QuoteManager {
 
       // Load products
       if (data.selected_products && Array.isArray(data.selected_products)) {
-        const skus = data.selected_products.map((item: any) => item.sku).filter((sku: string) => !!sku);
-
-        if (skus.length > 0) {
-          try {
-            const products = await ProductSearchEngine.getProductsBySkus(skus);
-            const productMap = new Map(products.map(p => [p.sku, p]));
-
-            for (const item of data.selected_products) {
-              const product = productMap.get(item.sku);
-              if (product) {
-                quote.items.push({
-                  productId: product.id,
-                  product,
-                  quantity: item.quantity || 1,
-                  lineTotal: item.lineTotal || product.price * (item.quantity || 1),
-                  reason: item.reason,
-                });
-              }
-            }
-          } catch (err) {
-            console.error("[QuoteManager] Error hydrating products:", err);
+        for (const item of data.selected_products) {
+          const product = await ProductSearchEngine.getProductDetails(item.sku);
+          if (product) {
+            quote.items.push({
+              productId: product.id,
+              product,
+              quantity: item.quantity || 1,
+              lineTotal: item.lineTotal || product.price,
+              reason: item.reason,
+            });
           }
         }
       }
