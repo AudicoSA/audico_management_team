@@ -323,16 +323,27 @@ export class QuoteManager {
 
       // Load products
       if (data.selected_products && Array.isArray(data.selected_products)) {
-        for (const item of data.selected_products) {
-          const product = await ProductSearchEngine.getProductDetails(item.sku);
-          if (product) {
-            quote.items.push({
-              productId: product.id,
-              product,
-              quantity: item.quantity || 1,
-              lineTotal: item.lineTotal || product.price,
-              reason: item.reason,
-            });
+        const skus = data.selected_products.map((item: any) => item.sku).filter((sku: string) => !!sku);
+
+        if (skus.length > 0) {
+          try {
+            const products = await ProductSearchEngine.getProductsBySkus(skus);
+            const productMap = new Map(products.map(p => [p.sku, p]));
+
+            for (const item of data.selected_products) {
+              const product = productMap.get(item.sku);
+              if (product) {
+                quote.items.push({
+                  productId: product.id,
+                  product,
+                  quantity: item.quantity || 1,
+                  lineTotal: item.lineTotal || product.price * (item.quantity || 1),
+                  reason: item.reason,
+                });
+              }
+            }
+          } catch (err) {
+            console.error("[QuoteManager] Error hydrating products:", err);
           }
         }
       }
