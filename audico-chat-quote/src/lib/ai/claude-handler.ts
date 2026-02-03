@@ -561,8 +561,10 @@ export class ClaudeConversationHandler {
       try {
         console.error("[ClaudeHandler] Full error:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
       } catch { /* ignore serialization error */ }
+
+      const errorMsg = error?.message || "Unknown error";
       return {
-        message: "I apologize, I encountered an issue. Could you please rephrase your request?",
+        message: `I apologize, I encountered an issue (${errorMsg}). Could you please rephrase your request?`,
         products: [],
       };
     }
