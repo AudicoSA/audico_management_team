@@ -829,9 +829,20 @@ export class ClaudeConversationHandler {
 
     const result = await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
 
+    // SANITIZE RESULT FOR AI CONTEXT
+    // Don't send the full heavy object to Claude, just what it needs
+    const sanitizedResult = {
+      sku: result.product.sku,
+      name: result.product.name,
+      price: result.product.price,
+      quantity: result.quantity,
+      lineTotal: result.lineTotal,
+      quote_id: quote_id,
+    };
+
     return {
       success: true,
-      data: result,
+      data: sanitizedResult,
       message: `Added ${sku} to quote`,
     };
   }

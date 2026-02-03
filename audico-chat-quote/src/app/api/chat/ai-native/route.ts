@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
       {
         error: "Failed to process message",
         message: "I apologize, something went wrong. Could you please try rephrasing your request?",
-        details: process.env.NODE_ENV === "development" ? error.message : undefined,
+        details: error.message, // Expose actual error for debugging
         processingTime,
       },
       { status: 500 }
