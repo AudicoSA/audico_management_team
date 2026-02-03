@@ -75,6 +75,7 @@ export class OpenAIConversationHandler {
 
       let iterations = 0;
       const maxIterations = 10;
+      let latestQuoteItems: any[] | undefined; // Track quote items for immediate cart updates
 
       while (response.choices[0].finish_reason === "tool_calls" && iterations < maxIterations) {
         iterations++;
@@ -94,6 +95,12 @@ export class OpenAIConversationHandler {
 
           const result = await this.executeTool(functionName, functionArgs);
 
+          // Capture quote items if product was added
+          if (functionName === "add_to_quote" && result.success && result.data?.quoteItems) {
+            latestQuoteItems = result.data.quoteItems;
+            console.log(`[OpenAIHandler] 🛒 Quote updated: ${latestQuoteItems.length} items in cart`);
+          }
+
           // Check for final recommendation
           if (functionName === "provide_final_recommendation") {
             const products = await ProductSearchEngine.getProductsBySkus(
@@ -103,6 +110,7 @@ export class OpenAIConversationHandler {
             return {
               message: functionArgs.explanation,
               products,
+              quoteItems: latestQuoteItems, // Include updated quote items
               totalPrice: functionArgs.total_price,
             };
           }
@@ -139,6 +147,7 @@ export class OpenAIConversationHandler {
       return {
         message,
         products: [],
+        quoteItems: latestQuoteItems, // Include updated quote items
       };
     } catch (error) {
       console.error("[OpenAIHandler] ❌ Error:", error);
@@ -337,11 +346,18 @@ export class OpenAIConversationHandler {
     const quantity = (input.quantity as number) || 1;
     const reason = input.reason as string | undefined;
 
-    const result = await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
+    await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
+
+    // Get the updated quote items to return to frontend for immediate cart update
+    const quoteItems = await this.quoteManager.getQuoteItems(quote_id);
 
     return {
       success: true,
-      data: result,
+      data: {
+        sku,
+        quantity,
+        quoteItems, // Include full quote items for immediate frontend update
+      },
       message: `Added ${sku} to quote`,
     };
   }

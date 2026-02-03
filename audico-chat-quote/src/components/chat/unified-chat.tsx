@@ -11,6 +11,7 @@ import type { ChatMessage, Product, Step, QuoteItem, ConsultationRequestSummary 
 
 interface UnifiedChatProps {
   onQuoteUpdate: (items: QuoteItem[], quoteId?: string) => void;
+  onNewChat?: () => void; // Callback when user starts a new chat
 }
 
 // Generate a simple ID without external dependencies
@@ -23,7 +24,7 @@ const WELCOME_CONTENT = `Hi! I'm your Audico assistant. I can help you build a c
 
 What would you like to do today?`;
 
-export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
+export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
   // Initialize messages as empty - add welcome message on client only to avoid hydration mismatch
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -374,7 +375,12 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
         }
       }
 
-      // 5. Notify
+      // 5. Notify parent to clear quote
+      if (onNewChat) {
+        onNewChat();
+      }
+
+      // 6. Notify user
       addMessage("assistant", "Started a new session. How can I help?");
     }
   };

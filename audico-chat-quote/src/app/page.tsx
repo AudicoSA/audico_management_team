@@ -139,6 +139,12 @@ export default function Home() {
     });
   };
 
+  const handleNewChat = () => {
+    console.log("[Home] New chat started - clearing quote state");
+    setQuoteItems([]);
+    setQuoteId(null);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Left Sidebar - Navigation */}
@@ -149,7 +155,10 @@ export default function Home() {
 
       {/* Main Content - Chat */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        <UnifiedChat onQuoteUpdate={handleQuoteUpdate} />
+        <UnifiedChat
+          onQuoteUpdate={handleQuoteUpdate}
+          onNewChat={handleNewChat}
+        />
       </main>
 
       {/* Right Sidebar - Quote Summary */}

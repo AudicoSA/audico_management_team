@@ -366,6 +366,7 @@ export class ClaudeConversationHandler {
       const maxIterations = 10; // Allow multiple tool calls
       let consultationRequest: any = null;
       let isEscalated = false;
+      let latestQuoteItems: any[] | undefined; // Track quote items for immediate cart updates
 
       while (response.stop_reason === "tool_use" && iterations < maxIterations) {
         iterations++;
@@ -388,6 +389,12 @@ export class ClaudeConversationHandler {
               consultationRequest = result.data;
               isEscalated = true;
               console.log(`[ClaudeHandler] 🚨 Project escalated: ${consultationRequest.reference_code}`);
+            }
+
+            // Capture quote items if product was added
+            if (block.name === "add_to_quote" && result.success && result.data?.quoteItems) {
+              latestQuoteItems = result.data.quoteItems;
+              console.log(`[ClaudeHandler] 🛒 Quote updated: ${latestQuoteItems.length} items in cart`);
             }
 
             toolResults.push({
@@ -449,7 +456,7 @@ export class ClaudeConversationHandler {
                 message,
                 products,
                 quoteId: this.context.currentQuoteId,
-                // DON'T return quoteItems - products should be displayed for user selection, not auto-added
+                quoteItems: latestQuoteItems, // Return updated quote items for immediate cart display
                 isComplete: false,
                 totalPrice: input.total_price,
                 consultationRequest,
@@ -488,6 +495,7 @@ export class ClaudeConversationHandler {
                 products: [],
                 needsMoreInfo: true,
                 quoteId: this.context.currentQuoteId,
+                quoteItems: latestQuoteItems, // Include quote items even when asking questions
                 consultationRequest,
                 isEscalated,
               };
@@ -550,7 +558,7 @@ export class ClaudeConversationHandler {
         message,
         products: [],
         quoteId: this.context.currentQuoteId,
-        quoteItems,
+        quoteItems: latestQuoteItems || quoteItems, // Prefer latestQuoteItems from tool execution
         consultationRequest,
         isEscalated,
       };
@@ -789,11 +797,18 @@ export class ClaudeConversationHandler {
     const quantity = (input.quantity as number) || 1;
     const reason = input.reason as string | undefined;
 
-    const result = await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
+    await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
+
+    // Get the updated quote items to return to frontend for immediate cart update
+    const quoteItems = await this.quoteManager.getQuoteItems(quote_id);
 
     return {
       success: true,
-      data: result,
+      data: {
+        sku,
+        quantity,
+        quoteItems, // Include full quote items for immediate frontend update
+      },
       message: `Added ${sku} to quote`,
     };
   }
