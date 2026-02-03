@@ -71,7 +71,7 @@ export class QuoteManager {
    * Add a product to a quote
    */
   async addProduct(quoteId: string, sku: string, quantity: number = 1, reason?: string): Promise<QuoteItem> {
-    const quote = this.quotes.get(quoteId);
+    const quote = await this.getQuote(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -133,7 +133,7 @@ export class QuoteManager {
    * Remove a product from a quote
    */
   async removeProduct(quoteId: string, sku: string): Promise<void> {
-    const quote = this.quotes.get(quoteId);
+    const quote = await this.getQuote(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -157,7 +157,7 @@ export class QuoteManager {
    * Update the quantity of a product in the quote
    */
   async updateQuantity(quoteId: string, productId: string, newQuantity: number): Promise<void> {
-    const quote = this.quotes.get(quoteId);
+    const quote = await this.getQuote(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
@@ -193,7 +193,7 @@ export class QuoteManager {
    * Update quote requirements or properties
    */
   async updateQuote(quoteId: string, updates: any): Promise<Quote> {
-    const quote = this.quotes.get(quoteId);
+    const quote = await this.getQuote(quoteId);
     if (!quote) {
       throw new Error(`Quote ${quoteId} not found`);
     }
