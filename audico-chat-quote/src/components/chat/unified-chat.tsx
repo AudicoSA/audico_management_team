@@ -1,7 +1,7 @@
 "use client";
 
+import { Send, Loader2, Bot, User, AlertTriangle, Paperclip, Image as ImageIcon, X, Trash2 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Bot, User, AlertTriangle, Paperclip, Image as ImageIcon, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProductGrid } from "../products/product-grid";
 import { StepIndicator } from "../quote/step-indicator";
@@ -39,9 +39,10 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
   const [tenderResults, setTenderResults] = useState<any>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [isProcessingTender, setIsProcessingTender] = useState(false);
+
   // Persist sessionId across all messages in this conversation to maintain agent context
   // Use localStorage if available to survive page refreshes
-  const [sessionId] = useState(() => {
+  const [sessionId, setSessionId] = useState(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('audico_session_id');
       if (stored) return stored;
@@ -333,6 +334,51 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
     );
   };
 
+  // Handle new chat / session reset
+  const handleNewChat = () => {
+    if (confirm("Start a new chat? This will clear your current conversation and quote.")) {
+      // 1. Generate new ID
+      const newId = generateId();
+
+      // 2. Update persistence
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('audico_session_id', newId);
+      }
+      setSessionId(newId);
+
+      // 3. Reset State
+      setMessages([
+        {
+          id: "welcome",
+          role: "assistant", // Fixed: strict literal type
+          content: WELCOME_CONTENT,
+          timestamp: new Date(),
+        },
+      ]);
+      setQuoteId(null);
+      setFlowType(null);
+      setCurrentProducts([]);
+      setCurrentStep(null);
+      setTotalSteps(0);
+      setConsultationRequest(null);
+      setIsEscalated(false);
+      setTenderResults(null);
+      setUploadPreview(null);
+
+      // 4. Clear URL if present
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('quoteId')) {
+          url.searchParams.delete('quoteId');
+          window.history.replaceState({}, '', url.toString());
+        }
+      }
+
+      // 5. Notify
+      addMessage("assistant", "Started a new session. How can I help?");
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
@@ -343,13 +389,24 @@ export function UnifiedChat({ onQuoteUpdate }: UnifiedChatProps) {
             BETA
           </span>
         </div>
-        {currentStep && totalSteps > 0 && (
-          <StepIndicator
-            currentStep={currentStep.id}
-            totalSteps={totalSteps}
-            stepLabel={currentStep.label}
-          />
-        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleNewChat}
+            className="p-2 text-foreground-muted hover:text-error hover:bg-error/10 rounded-full transition-colors"
+            title="Start New Chat (Clear History)"
+          >
+            <Trash2 size={18} />
+          </button>
+
+          {currentStep && totalSteps > 0 && (
+            <StepIndicator
+              currentStep={currentStep.id}
+              totalSteps={totalSteps}
+              stepLabel={currentStep.label}
+            />
+          )}
+        </div>
       </header>
 
       {/* Messages Area */}
