@@ -346,20 +346,36 @@ export class OpenAIConversationHandler {
     const quantity = (input.quantity as number) || 1;
     const reason = input.reason as string | undefined;
 
-    await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
+    // Validate quote_id exists
+    if (!quote_id) {
+      return {
+        success: false,
+        error: "quote_id is required. Please create a quote first using create_quote tool.",
+      };
+    }
 
-    // Get the updated quote items to return to frontend for immediate cart update
-    const quoteItems = await this.quoteManager.getQuoteItems(quote_id);
+    try {
+      await this.quoteManager.addProduct(quote_id, sku, quantity, reason);
 
-    return {
-      success: true,
-      data: {
-        sku,
-        quantity,
-        quoteItems, // Include full quote items for immediate frontend update
-      },
-      message: `Added ${sku} to quote`,
-    };
+      // Get the updated quote items to return to frontend for immediate cart update
+      const quoteItems = await this.quoteManager.getQuoteItems(quote_id);
+
+      return {
+        success: true,
+        data: {
+          sku,
+          quantity,
+          quoteItems, // Include full quote items for immediate frontend update
+        },
+        message: `Added ${sku} to quote`,
+      };
+    } catch (error: any) {
+      console.error(`[OpenAIHandler] Failed to add product to quote:`, error);
+      return {
+        success: false,
+        error: error.message || "Failed to add product to quote",
+      };
+    }
   }
 
   private async handleUpdateQuote(input: Record<string, unknown>): Promise<ToolResult> {
