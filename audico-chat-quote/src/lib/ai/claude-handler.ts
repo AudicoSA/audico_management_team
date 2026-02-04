@@ -19,7 +19,7 @@ import { analyzeComplexity, type ComplexityAnalysis, explainComplexity } from ".
 import { consultationRequestManager } from "./consultation-request-manager";
 
 // Configurable model with fallback
-const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
+const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
 const MAX_RETRIES = Number(process.env.ANTHROPIC_MAX_RETRIES) || 3;
 
 /**
