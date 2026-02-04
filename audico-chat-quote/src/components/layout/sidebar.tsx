@@ -125,10 +125,10 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               <span className="font-semibold text-accent">Pro Mode</span>
             </div>
             <p className="text-sm text-foreground-muted mb-3">
-              Get AI-powered recommendations and faster quotes.
+              Signup for reseller pricing, faster quotes, and installer notes.
             </p>
             <button className="btn-primary w-full text-sm">
-              Upgrade Now
+              Upgrade Soon
             </button>
           </div>
         </div>
