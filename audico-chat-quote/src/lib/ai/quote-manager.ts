@@ -25,6 +25,7 @@ interface Quote {
   requirements: any;
   items: QuoteItem[];
   totalPrice: number;
+  invoiceNumber?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -251,6 +252,89 @@ export class QuoteManager {
   }
 
   /**
+   * Get or generate invoice number for a quote
+   * Invoice numbers are generated once and persisted for EFT tracking
+   */
+  async getInvoiceNumber(quoteId: string): Promise<string> {
+    const quote = await this.getQuote(quoteId);
+    if (!quote) {
+      throw new Error(`Quote ${quoteId} not found`);
+    }
+
+    // Return existing invoice number if already assigned
+    if (quote.invoiceNumber) {
+      return quote.invoiceNumber;
+    }
+
+    // Generate new invoice number
+    const invoiceNumber = await this.generateInvoiceNumber();
+    quote.invoiceNumber = invoiceNumber;
+    quote.updatedAt = new Date().toISOString();
+
+    // Save to database with invoice number
+    await this.saveToDatabase(quote);
+
+    console.log(`[QuoteManager] Generated invoice number ${invoiceNumber} for quote ${quoteId}`);
+
+    return invoiceNumber;
+  }
+
+  /**
+   * Generate a unique invoice number
+   * Format: PF{YYMMDD}-{SEQ} e.g. PF260204-001
+   * Uses database sequence for uniqueness, falls back to timestamp if DB unavailable
+   */
+  private async generateInvoiceNumber(): Promise<string> {
+    const supabase = getSupabaseServer();
+
+    try {
+      // Try to use database function for guaranteed uniqueness
+      const { data, error } = await supabase.rpc('generate_invoice_number');
+
+      if (!error && data) {
+        return data as string;
+      }
+
+      // Fallback: generate locally if DB function not available
+      console.warn("[QuoteManager] DB invoice generator not available, using fallback");
+    } catch (err) {
+      console.warn("[QuoteManager] Error calling invoice generator:", err);
+    }
+
+    // Fallback generation (timestamp-based)
+    const now = new Date();
+    const yy = now.getFullYear().toString().slice(-2);
+    const mm = (now.getMonth() + 1).toString().padStart(2, '0');
+    const dd = now.getDate().toString().padStart(2, '0');
+    const ms = now.getTime().toString().slice(-4);
+    return `PF${yy}${mm}${dd}-${ms}`;
+  }
+
+  /**
+   * Find quote by invoice number
+   */
+  async findByInvoiceNumber(invoiceNumber: string): Promise<Quote | undefined> {
+    const supabase = getSupabaseServer();
+
+    try {
+      const { data, error } = await supabase
+        .from("quotes")
+        .select("*")
+        .eq("invoice_number", invoiceNumber)
+        .single();
+
+      if (error || !data) {
+        return undefined;
+      }
+
+      return this.loadFromDatabase(data.id);
+    } catch (error) {
+      console.error("[QuoteManager] Error finding quote by invoice:", error);
+      return undefined;
+    }
+  }
+
+  /**
    * Save quote to database
    */
   private async saveToDatabase(quote: Quote): Promise<void> {
@@ -271,6 +355,7 @@ export class QuoteManager {
           lineTotal: item.lineTotal,
           reason: item.reason,
         })),
+        invoice_number: quote.invoiceNumber || null,
         status: "in_progress",
         created_at: quote.createdAt,
         updated_at: quote.updatedAt,
@@ -309,6 +394,7 @@ export class QuoteManager {
         requirements: data.requirements || {},
         items: [], // Will be populated below
         totalPrice: 0,
+        invoiceNumber: data.invoice_number || undefined,
         createdAt: data.created_at,
         updatedAt: data.updated_at,
       };

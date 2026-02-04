@@ -96,6 +96,21 @@ export default function Home() {
   const handleGenerateQuote = async (customerDetails?: any) => {
     if (quoteItems.length === 0) return;
 
+    // Get persisted invoice number from database (or generate if new)
+    let invoiceNumber: string | undefined;
+    if (quoteId) {
+      try {
+        const res = await fetch(`/api/quote/invoice?quote_id=${quoteId}`);
+        if (res.ok) {
+          const data = await res.json();
+          invoiceNumber = data.invoice_number;
+          console.log(`[Home] Got invoice number: ${invoiceNumber}`);
+        }
+      } catch (err) {
+        console.error("[Home] Failed to get invoice number:", err);
+      }
+    }
+
     // Capture lead and save quote to DB
     if (customerDetails) {
       // Calculate totals for storage
@@ -104,22 +119,13 @@ export default function Home() {
       const subTotal = totalInclusive / (1 + vatRate);
       const vatAmount = totalInclusive - subTotal;
 
-      const currentQuoteId = quoteId || `PF${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${Math.floor(Math.random() * 900) + 100}`;
-
-      // Expecting to use the same ID for PDF and DB
-      // We need to ensure the PDF generator uses this ID if we want them to match perfectly.
-      // Currently PDF generator logic creates its own if not provided?
-      // Actually PDF generator has its own logic: `PF${yy}${mm}${dd}-${randomSeq}` IF we don't force it?
-      // Wait, let's look at pdf-generator.ts. It ignores details.quoteId for the Invoice No text and re-generates it!
-      // This is a disconnect. I should fix pdf-generator to use details.quoteId if it looks like a PF number.
-
-      // For now, let's send what we have.
       fetch("/api/quote/capture-lead", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId,
-          quoteId: currentQuoteId,
+          quoteId: quoteId,
+          invoiceNumber,
           ...customerDetails,
           items: quoteItems,
           totals: {
@@ -131,9 +137,9 @@ export default function Home() {
       }).catch(err => console.error("Failed to capture lead", err));
     }
 
-    // Generate PDF with captured details
+    // Generate PDF with persisted invoice number
     await generateQuotePDF({
-      quoteId: quoteId || `UNKNOWN-${Date.now()}`,
+      quoteId: invoiceNumber || quoteId || `UNKNOWN-${Date.now()}`,
       items: quoteItems,
       ...customerDetails
     });

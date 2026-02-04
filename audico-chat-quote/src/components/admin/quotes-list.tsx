@@ -18,10 +18,14 @@ export function QuotesList({ quotes: initialQuotes }: QuoteListProps) {
     const [transcript, setTranscript] = useState<Record<string, any[]>>({});
     const [loadingTranscript, setLoadingTranscript] = useState<string | null>(null);
 
-    const filteredQuotes = quotes.filter((q) =>
-        q.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (q.session_id && q.session_id.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    const filteredQuotes = quotes.filter((q) => {
+        const search = searchTerm.toLowerCase();
+        return (
+            q.id.toLowerCase().includes(search) ||
+            (q.session_id && q.session_id.toLowerCase().includes(search)) ||
+            (q.invoice_number && q.invoice_number.toLowerCase().includes(search))
+        );
+    });
 
     const toggleExpand = (id: string) => {
         setExpandedId(expandedId === id ? null : id);
@@ -77,7 +81,7 @@ export function QuotesList({ quotes: initialQuotes }: QuoteListProps) {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <input
                         type="text"
-                        placeholder="Search by Quote ID or Session ID..."
+                        placeholder="Search by Invoice No (PF...), Quote ID, or Session ID..."
                         className="w-full pl-10 pr-4 py-2 bg-background-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
@@ -88,7 +92,7 @@ export function QuotesList({ quotes: initialQuotes }: QuoteListProps) {
             <div className="bg-background-secondary border border-border rounded-xl overflow-hidden">
                 <div className="grid grid-cols-12 gap-4 p-4 border-b border-border bg-muted/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     <div className="col-span-3">Created</div>
-                    <div className="col-span-4">ID / Type</div>
+                    <div className="col-span-4">Invoice / Type</div>
                     <div className="col-span-2 text-right">Items</div>
                     <div className="col-span-2 text-right">Total</div>
                     <div className="col-span-1"></div>
@@ -120,9 +124,15 @@ export function QuotesList({ quotes: initialQuotes }: QuoteListProps) {
                                     </div>
 
                                     <div className="col-span-4">
-                                        <div className="text-xs font-mono text-muted-foreground mb-1 truncate" title={quote.id}>
-                                            {quote.id.substring(0, 8)}...
-                                        </div>
+                                        {quote.invoice_number ? (
+                                            <div className="font-mono font-semibold text-primary mb-1" title={`Invoice: ${quote.invoice_number}`}>
+                                                {quote.invoice_number}
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs font-mono text-muted-foreground mb-1 truncate" title={quote.id}>
+                                                {quote.id.substring(0, 8)}...
+                                            </div>
+                                        )}
                                         <span className={cn(
                                             "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize",
                                             quote.flow_type === 'simple' ? "bg-blue-500/10 text-blue-500" :
