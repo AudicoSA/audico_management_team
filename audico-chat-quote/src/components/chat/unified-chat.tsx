@@ -42,13 +42,13 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
   const [isProcessingTender, setIsProcessingTender] = useState(false);
 
   // Persist sessionId across all messages in this conversation to maintain agent context
-  // Use localStorage if available to survive page refreshes
+  // Use sessionStorage (not localStorage) so refresh = new session, matching UI reset behavior
   const [sessionId, setSessionId] = useState(() => {
     if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('audico_session_id');
+      const stored = sessionStorage.getItem('audico_session_id');
       if (stored) return stored;
       const newId = generateId();
-      localStorage.setItem('audico_session_id', newId);
+      sessionStorage.setItem('audico_session_id', newId);
       return newId;
     }
     return generateId();
@@ -343,7 +343,7 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
 
       // 2. Update persistence
       if (typeof window !== 'undefined') {
-        localStorage.setItem('audico_session_id', newId);
+        sessionStorage.setItem('audico_session_id', newId);
       }
       setSessionId(newId);
 
