@@ -394,7 +394,7 @@ export class ClaudeConversationHandler {
             // Capture quote items if product was added
             if (block.name === "add_to_quote" && result.success && result.data?.quoteItems) {
               latestQuoteItems = result.data.quoteItems;
-              console.log(`[ClaudeHandler] 🛒 Quote updated: ${latestQuoteItems.length} items in cart`);
+              console.log(`[ClaudeHandler] 🛒 Quote updated: ${latestQuoteItems?.length || 0} items in cart`);
             }
 
             toolResults.push({

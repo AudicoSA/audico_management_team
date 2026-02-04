@@ -98,7 +98,7 @@ export class OpenAIConversationHandler {
           // Capture quote items if product was added
           if (functionName === "add_to_quote" && result.success && result.data?.quoteItems) {
             latestQuoteItems = result.data.quoteItems;
-            console.log(`[OpenAIHandler] 🛒 Quote updated: ${latestQuoteItems.length} items in cart`);
+            console.log(`[OpenAIHandler] 🛒 Quote updated: ${latestQuoteItems?.length || 0} items in cart`);
           }
 
           // Check for final recommendation
