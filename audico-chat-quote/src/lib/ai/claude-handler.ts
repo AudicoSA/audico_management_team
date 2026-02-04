@@ -238,6 +238,65 @@ export class ClaudeConversationHandler {
   }
 
   /**
+   * Sanitize conversation history to fix corrupted tool_use/tool_result pairs
+   * This prevents the error: "tool_use ids were found without tool_result blocks"
+   */
+  private sanitizeConversationHistory(): void {
+    const history = this.context.conversationHistory;
+    if (history.length === 0) return;
+
+    // Find all tool_use IDs in assistant messages
+    const toolUseIds = new Set<string>();
+    const toolResultIds = new Set<string>();
+
+    for (const msg of history) {
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_use') {
+            toolUseIds.add(block.id);
+          }
+          if (block.type === 'tool_result') {
+            toolResultIds.add(block.tool_use_id);
+          }
+        }
+      }
+    }
+
+    // Find orphaned tool_use IDs (no matching tool_result)
+    const orphanedIds = new Set([...toolUseIds].filter(id => !toolResultIds.has(id)));
+
+    if (orphanedIds.size > 0) {
+      console.warn(`[ClaudeHandler] ⚠️ Found ${orphanedIds.size} orphaned tool_use blocks, sanitizing history`);
+
+      // Remove messages containing orphaned tool_use blocks and truncate history
+      // Find the index of the first message with an orphaned tool_use
+      let truncateIndex = -1;
+      for (let i = 0; i < history.length; i++) {
+        const msg = history[i];
+        if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === 'tool_use' && orphanedIds.has(block.id)) {
+              truncateIndex = i;
+              break;
+            }
+          }
+        }
+        if (truncateIndex >= 0) break;
+      }
+
+      if (truncateIndex > 0) {
+        // Keep only messages before the corrupted one
+        this.context.conversationHistory = history.slice(0, truncateIndex);
+        console.log(`[ClaudeHandler] ✅ Truncated history to ${truncateIndex} messages`);
+      } else if (truncateIndex === 0) {
+        // First message is corrupted, start fresh
+        this.context.conversationHistory = [];
+        console.log(`[ClaudeHandler] ✅ Cleared entire history due to corruption at start`);
+      }
+    }
+  }
+
+  /**
    * Save a message to the database
    * Called after each user/assistant message to persist conversation
    * TEMPORARILY DISABLED due to network connectivity issues
@@ -350,6 +409,9 @@ export class ClaudeConversationHandler {
     }
 
     try {
+      // Sanitize conversation history to fix corrupted tool_use/tool_result pairs
+      this.sanitizeConversationHistory();
+
       // Create initial request to Claude
       let response = await withRetry(() => this.anthropic.messages.create({
         model: CLAUDE_MODEL,
