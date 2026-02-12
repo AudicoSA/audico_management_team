@@ -285,18 +285,33 @@ async def create_product(request: CreateRequest):
         # Allow frontend override
         final_name = request.name or html.unescape(product.get("product_name") or "")
 
-        # User Logic: Round cost price to nearest R10
-        # Old: int(raw_price // 10) * 10  (Floors to lower 10)
-        # New: round(raw_price / 10) * 10 (Rounds to nearest 10)
-        raw_price = product.get("cost_price") or product.get("selling_price", 0)
-        rounded_price = round(raw_price / 10) * 10
+        # User Logic: Round cost/selling price to nearest R10 if > 100
+        # Check source of prices
+        cost_p = product.get("cost_price", 0)
+        sell_p = product.get("selling_price", 0)
+        
+        q_cost = cost_p
+        q_sell = sell_p
+        
+        if sell_p > 0:
+            # Selling-price based (e.g. ProAudio)
+            # Only round if > 100
+            if sell_p > 100:
+                q_sell = round(sell_p / 10) * 10
+            # Keep q_cost as is (likely 0)
+        elif cost_p > 0:
+            # Cost-price based (e.g. Nology)
+            if cost_p > 100:
+                q_cost = round(cost_p / 10) * 10
+            # Keep q_sell as 0
+
         
         queue_data = {
             "supplier_name": supplier_name,
             "sku": product.get("sku"),
             "name": final_name,
-            "cost_price": rounded_price,
-            "selling_price": product.get("selling_price", 0),
+            "cost_price": q_cost,
+            "selling_price": q_sell,
             "stock_level": product.get("total_stock", 0),
             "status": "pending",
             "category_ids": request.category_ids or []  # Store category IDs for product creation
