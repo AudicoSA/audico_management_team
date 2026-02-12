@@ -82,6 +82,8 @@ export class OpenAIConversationHandler {
         console.log(`[OpenAIHandler] 🔧 Tool iteration ${iterations}`);
 
         const toolCalls = response.choices[0].message.tool_calls || [];
+        const toolResults: OpenAI.ChatCompletionToolMessageParam[] = [];
+        let terminalAction: { type: 'recommendation', args: any } | null = null;
 
         // Add assistant message to history
         this.context.conversationHistory.push(response.choices[0].message);
@@ -101,26 +103,35 @@ export class OpenAIConversationHandler {
             console.log(`[OpenAIHandler] 🛒 Quote updated: ${latestQuoteItems?.length || 0} items in cart`);
           }
 
-          // Check for final recommendation
+          // Check for final recommendation (capture but don't return yet)
           if (functionName === "provide_final_recommendation") {
-            const products = await ProductSearchEngine.getProductsBySkus(
-              functionArgs.products.map((p: any) => p.sku)
-            );
-
-            return {
-              message: functionArgs.explanation,
-              products,
-              quoteItems: latestQuoteItems, // Include updated quote items
-              totalPrice: functionArgs.total_price,
-            };
+            terminalAction = { type: 'recommendation', args: functionArgs };
           }
 
-          // Add tool result to history
-          this.context.conversationHistory.push({
+          // Add tool result to buffer
+          toolResults.push({
             role: "tool",
             tool_call_id: toolCall.id,
             content: JSON.stringify(result),
           });
+        }
+
+        // Push ALL tool results to history
+        this.context.conversationHistory.push(...toolResults);
+
+        // NOW handle terminal action if any
+        if (terminalAction) {
+          const { args } = terminalAction;
+          const products = await ProductSearchEngine.getProductsBySkus(
+            args.products.map((p: any) => p.sku)
+          );
+
+          return {
+            message: args.explanation,
+            products,
+            quoteItems: latestQuoteItems, // Include updated quote items
+            totalPrice: args.total_price,
+          };
         }
 
         // Get next response

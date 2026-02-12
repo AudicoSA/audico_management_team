@@ -435,6 +435,7 @@ export class ClaudeConversationHandler {
         console.log(`[ClaudeHandler] 🔧 Tool iteration ${iterations}`);
 
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        let terminalAction: { type: 'recommendation' | 'clarification', block: Anthropic.ToolUseBlock, result: any } | null = null;
 
         // Process each tool call in the response
         for (const block of response.content) {
@@ -465,107 +466,17 @@ export class ClaudeConversationHandler {
               content: JSON.stringify(result),
             });
 
-            // Check for final recommendation
+            // Check for terminal actions (capture them but don't return yet)
             if (block.name === "provide_final_recommendation") {
-              const input = block.input as {
-                quote_id?: string;
-                products: { sku: string; quantity?: number; reason: string }[];
-                explanation: string;
-                total_price: number;
-                alternative_note?: string;
-              };
-
-              // Get full product objects
-              const productSkus = input.products.map((p) => p.sku);
-              const products = await ProductSearchEngine.getProductsBySkus(productSkus);
-
-              // Build the final message
-              let message = input.explanation;
-              if (input.alternative_note) {
-                message += `\n\n${input.alternative_note}`;
-              }
-              message += `\n\n**Total: R${input.total_price.toLocaleString()}**`;
-
-              // Save to quote if we have a valid UUID
-              if (input.quote_id) {
-                // Validate UUID format (basic check)
-                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-                if (uuidRegex.test(input.quote_id)) {
-                  this.context.currentQuoteId = input.quote_id;
-                } else {
-                  console.warn(`[ClaudeHandler] Invalid quote_id format: ${input.quote_id}, ignoring`);
-                }
-              }
-
-              // Add assistant response AND tool results to history (critical for context)
-              this.context.conversationHistory.push({
-                role: "assistant",
-                content: response.content,
-              });
-              // Persist assistant message
-              this.saveMessage("assistant", response.content);
-
-              this.context.conversationHistory.push({
-                role: "user",
-                content: toolResults,
-              });
-              // Persist tool results as user message
-              this.saveMessage("user", toolResults);
-
-              console.log(`[ClaudeHandler] ✅ Final recommendation provided`);
-
-              return {
-                message,
-                products,
-                quoteId: this.context.currentQuoteId,
-                quoteItems: latestQuoteItems, // Return updated quote items for immediate cart display
-                isComplete: false,
-                totalPrice: input.total_price,
-                consultationRequest,
-                isEscalated,
-              };
-            }
-
-            // Check for clarifying question
-            if (block.name === "ask_clarifying_question") {
-              const input = block.input as { question: string; reason: string; options?: string[] };
-
-              console.log(`[ClaudeHandler] ❓ Clarifying question: ${input.question}`);
-
-              // Add assistant response AND tool results to history (critical for context)
-              this.context.conversationHistory.push({
-                role: "assistant",
-                content: response.content,
-              });
-              // Persist assistant message
-              this.saveMessage("assistant", response.content);
-
-              this.context.conversationHistory.push({
-                role: "user",
-                content: toolResults,
-              });
-              // Persist tool results as user message
-              this.saveMessage("user", toolResults);
-
-              let message = input.question;
-              if (input.options && input.options.length > 0) {
-                message += "\n\n" + input.options.map((opt, i) => `${i + 1}. ${opt}`).join("\n");
-              }
-
-              return {
-                message,
-                products: [],
-                needsMoreInfo: true,
-                quoteId: this.context.currentQuoteId,
-                quoteItems: latestQuoteItems, // Include quote items even when asking questions
-                consultationRequest,
-                isEscalated,
-              };
+              terminalAction = { type: 'recommendation', block, result };
+            } else if (block.name === "ask_clarifying_question") {
+              terminalAction = { type: 'clarification', block, result };
             }
           }
         }
 
-        // Continue conversation with tool results
+        // Add assistant response AND tool results to history (critical for context)
+        // We do this BEFORE returning for terminal actions to ensure history is complete
         this.context.conversationHistory.push({
           role: "assistant",
           content: response.content,
@@ -579,6 +490,77 @@ export class ClaudeConversationHandler {
         });
         // Persist tool results as user message
         this.saveMessage("user", toolResults);
+
+        // NOW handle terminal actions if any were found
+        if (terminalAction) {
+          const { type, block, result } = terminalAction;
+
+          if (type === 'recommendation') {
+            const input = block.input as {
+              quote_id?: string;
+              products: { sku: string; quantity?: number; reason: string }[];
+              explanation: string;
+              total_price: number;
+              alternative_note?: string;
+            };
+
+            // Get full product objects
+            const productSkus = input.products.map((p) => p.sku);
+            const products = await ProductSearchEngine.getProductsBySkus(productSkus);
+
+            // Build the final message
+            let message = input.explanation;
+            if (input.alternative_note) {
+              message += `\n\n${input.alternative_note}`;
+            }
+            message += `\n\n**Total: R${input.total_price.toLocaleString()}**`;
+
+            // Save to quote if we have a valid UUID
+            if (input.quote_id) {
+              // Validate UUID format (basic check)
+              const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+              if (uuidRegex.test(input.quote_id)) {
+                this.context.currentQuoteId = input.quote_id;
+              } else {
+                console.warn(`[ClaudeHandler] Invalid quote_id format: ${input.quote_id}, ignoring`);
+              }
+            }
+
+            console.log(`[ClaudeHandler] ✅ Final recommendation provided`);
+
+            return {
+              message,
+              products,
+              quoteId: this.context.currentQuoteId,
+              quoteItems: latestQuoteItems, // Return updated quote items for immediate cart display
+              isComplete: false,
+              totalPrice: input.total_price,
+              consultationRequest,
+              isEscalated,
+            };
+          }
+
+          if (type === 'clarification') {
+            const input = block.input as { question: string; reason: string; options?: string[] };
+
+            console.log(`[ClaudeHandler] ❓ Clarifying question: ${input.question}`);
+
+            let message = input.question;
+            if (input.options && input.options.length > 0) {
+              message += "\n\n" + input.options.map((opt, i) => `${i + 1}. ${opt}`).join("\n");
+            }
+
+            return {
+              message,
+              products: [],
+              needsMoreInfo: true,
+              quoteId: this.context.currentQuoteId,
+              quoteItems: latestQuoteItems, // Include quote items even when asking questions
+              consultationRequest,
+              isEscalated,
+            };
+          }
+        }
 
         // Get next response from Claude
         response = await withRetry(() => this.anthropic.messages.create({
