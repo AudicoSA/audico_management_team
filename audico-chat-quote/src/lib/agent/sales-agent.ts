@@ -219,8 +219,8 @@ export class SalesAgent {
       contextInfo = `\n\nCUSTOMER'S CURRENT QUOTE:\n${context.selectedProducts
         .map((p: any) => `- ${p.product?.name}: R${p.product?.price?.toLocaleString()}`)
         .join("\n")}\nTotal: R${context.selectedProducts
-        .reduce((sum: number, p: any) => sum + (p.lineTotal || 0), 0)
-        .toLocaleString()}`;
+          .reduce((sum: number, p: any) => sum + (p.lineTotal || 0), 0)
+          .toLocaleString()}`;
     }
 
     // Add the customer message
@@ -249,6 +249,7 @@ export class SalesAgent {
         iterations++;
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
+        // Execute all tools
         for (const block of response.content) {
           if (block.type === "tool_use") {
             console.log(`[SalesAgent] Tool: ${block.name}`, JSON.stringify(block.input).slice(0, 100));
@@ -259,7 +260,23 @@ export class SalesAgent {
               tool_use_id: block.id,
               content: JSON.stringify(result),
             });
+          }
+        }
 
+        // Add assistant's tool use message AND user's tool results to history
+        this.conversationHistory.push({
+          role: "assistant",
+          content: response.content,
+        });
+
+        this.conversationHistory.push({
+          role: "user",
+          content: toolResults,
+        });
+
+        // Now check if we need to return early (terminal tools)
+        for (const block of response.content) {
+          if (block.type === "tool_use") {
             // Check for final recommendation
             if (block.name === "provide_recommendation") {
               const input = block.input as {
@@ -279,12 +296,9 @@ export class SalesAgent {
                 message += `\n\n${input.alternativeNote}`;
               }
 
-              // Add the assistant response to history
-              this.conversationHistory.push({
-                role: "assistant",
-                content: response.content,
-              });
-
+              // We already pushed the tool results, so we can just return now
+              // The next time the agent is called, it will see the tool results in history
+              // But for now, we return the response to the user
               return {
                 message,
                 products,
@@ -295,11 +309,6 @@ export class SalesAgent {
             if (block.name === "ask_clarifying_question") {
               const input = block.input as { question: string };
 
-              this.conversationHistory.push({
-                role: "assistant",
-                content: response.content,
-              });
-
               return {
                 message: input.question,
                 products: [],
@@ -309,16 +318,6 @@ export class SalesAgent {
             }
           }
         }
-
-        // Continue conversation with tool results
-        this.conversationHistory.push({
-          role: "assistant",
-          content: response.content,
-        });
-        this.conversationHistory.push({
-          role: "user",
-          content: toolResults,
-        });
 
         response = await this.anthropic.messages.create({
           model: "claude-sonnet-4-20250514",

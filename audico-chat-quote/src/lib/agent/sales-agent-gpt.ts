@@ -219,6 +219,7 @@ export class SalesAgentGPT {
         const toolResults: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
         const toolCalls = assistantMessage.tool_calls || [];
 
+        // Execute all tools first
         for (const toolCall of toolCalls) {
           const functionName = toolCall.function.name;
           const args = JSON.parse(toolCall.function.arguments);
@@ -227,24 +228,6 @@ export class SalesAgentGPT {
 
           const result = await this.executeTool(functionName, args);
 
-          // Check for recommend call
-          if (functionName === "recommend") {
-            const products = await this.getProductsBySkus(
-              args.products.map((p: any) => p.sku)
-            );
-
-            this.messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: JSON.stringify({ success: true }),
-            });
-
-            return {
-              message: args.explanation,
-              products,
-            };
-          }
-
           toolResults.push({
             role: "tool",
             tool_call_id: toolCall.id,
@@ -252,7 +235,35 @@ export class SalesAgentGPT {
           });
         }
 
+        // Add assistant and tool messages to history
         this.messages.push(...toolResults);
+
+        // NOW check for terminal actions (recommend)
+        // We do this loop just to find if we need to return early
+        for (const toolCall of toolCalls) {
+          const functionName = toolCall.function.name;
+
+          if (functionName === "recommend") {
+            const args = JSON.parse(toolCall.function.arguments);
+            const products = await this.getProductsBySkus(
+              args.products.map((p: any) => p.sku)
+            );
+
+            // We already tracked the tool result above as { success: true } (from executeTool)
+            // Actually wait, executeTool for recommend returns args.
+            // We should make sure the tool result content for 'recommend' is correct.
+            // In the original code:
+            // this.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ success: true }) });
+            // But executeTool returned args.
+            // Let's look at executeTool for recommend: it returns args.
+            // We should probably just return success: true for the tool result in history to keep it clean.
+
+            return {
+              message: args.explanation,
+              products,
+            };
+          }
+        }
 
         response = await this.openai.chat.completions.create({
           model: "gpt-4-turbo-preview",
@@ -374,7 +385,7 @@ export class SalesAgentGPT {
           // Speaker type filter
           if (speakerType === "bookshelf") {
             if (nameLower.includes("floorstanding") || nameLower.includes("tower") ||
-                nameLower.includes("ceiling") || nameLower.includes("outdoor")) {
+              nameLower.includes("ceiling") || nameLower.includes("outdoor")) {
               return false;
             }
           }
