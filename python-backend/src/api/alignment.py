@@ -1,5 +1,6 @@
 import json
 import os
+import html
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
@@ -79,7 +80,8 @@ async def get_unmatched_products(limit: int = 20):
                     unmatched_data.append({
                         "id": p['id'],
                         "sku": p['sku'],
-                        "name": p['product_name'], 
+                        # FIX: Decode HTML entities for display
+                        "name": html.unescape(p['product_name'] or ""), 
                         "description": p.get('description'),
                         "price": p.get('selling_price', 0),
                         "supplier": "Internal" 
@@ -113,7 +115,8 @@ async def get_candidates(internal_product_id: str):
         
     supplier_data = {
         "sku": product.get("sku"),
-        "name": product.get("product_name"), # Fix: use product_name
+        # FIX: Decode HTML entities for display
+        "name": html.unescape(product.get("product_name") or ""), # Fix: use product_name
         "price": product.get("selling_price") # Fix: use selling_price
     }
     
@@ -250,6 +253,7 @@ async def auto_link_products(request: AutoLinkRequest):
 
 class CreateRequest(BaseModel):
     internal_product_id: str
+    name: Optional[str] = None # Optional override from frontend
     category_ids: Optional[List[int]] = None  # Optional category IDs for the new product
 
 @router.post("/create")
@@ -277,11 +281,15 @@ async def create_product(request: CreateRequest):
         
         # Use Product Name directly as it comes from the feed (e.g. "Ubiquiti UniFi...")
         # Description often contains HTML or is too long for a name.
-        final_name = product.get("product_name")
+        # FIX: Decode HTML entities (e.g. &#8243; -> ")
+        # Allow frontend override
+        final_name = request.name or html.unescape(product.get("product_name") or "")
 
-        # User Logic: Round cost price to nearest R10 (floor/no cents)
+        # User Logic: Round cost price to nearest R10
+        # Old: int(raw_price // 10) * 10  (Floors to lower 10)
+        # New: round(raw_price / 10) * 10 (Rounds to nearest 10)
         raw_price = product.get("cost_price") or product.get("selling_price", 0)
-        rounded_price = int(raw_price // 10) * 10
+        rounded_price = round(raw_price / 10) * 10
         
         queue_data = {
             "supplier_name": supplier_name,
