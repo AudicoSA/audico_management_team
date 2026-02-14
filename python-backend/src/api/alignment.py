@@ -565,3 +565,59 @@ async def delete_duplicate_skus():
     except Exception as e:
         logger.error("delete_duplicates_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/link-manual")
+async def link_product_manual(request: dict):
+    """
+    Manually link a product using OpenCart product URL or ID.
+    
+    Request body:
+    {
+        "internal_product_id": "uuid",
+        "opencart_url_or_id": "https://audicoonline.co.za/...?product_id=123" or "123"
+    }
+    """
+    sb = get_supabase_connector()
+    
+    try:
+        internal_id = request.get("internal_product_id")
+        url_or_id = request.get("opencart_url_or_id")
+        
+        if not internal_id or not url_or_id:
+            raise HTTPException(status_code=400, detail="Missing internal_product_id or opencart_url_or_id")
+        
+        # Extract product_id from URL or use directly
+        import re
+        if isinstance(url_or_id, str) and "product_id=" in url_or_id:
+            match = re.search(r'product_id=(\d+)', url_or_id)
+            if match:
+                opencart_product_id = int(match.group(1))
+            else:
+                raise HTTPException(status_code=400, detail="Could not extract product_id from URL")
+        else:
+            try:
+                opencart_product_id = int(url_or_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid product_id format")
+        
+        # Create the link
+        link_data = {
+            "internal_product_id": internal_id,
+            "opencart_product_id": opencart_product_id,
+            "match_type": "manual",
+            "score": 100
+        }
+        
+        sb.client.table("product_matches").insert(link_data).execute()
+        logger.info("manual_link_created", internal_id=internal_id, opencart_id=opencart_product_id)
+        
+        return {
+            "status": "success",
+            "message": f"Manually linked product to OpenCart ID {opencart_product_id}",
+            "data": link_data
+        }
+        
+    except Exception as e:
+        logger.error("manual_link_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
