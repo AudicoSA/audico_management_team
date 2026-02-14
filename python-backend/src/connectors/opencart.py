@@ -514,8 +514,9 @@ class OpenCartConnector:
             connection = self._get_connection()
             with connection.cursor() as cursor:
                 import re
-                # Split by space, hyphen, underscore, dot, or forward slash
-                words = re.split(r'[\s\-_./]+', query)
+                # Split by space, hyphen, underscore, dot, colon, or forward slash
+                # This ensures "80:4L" becomes ["80", "4L"] for better matching
+                words = re.split(r'[\s\-_.:/ ]+', query)
                 
                 # Filter strictly alphanumeric for safety and length > 1
                 valid_words = [w for w in words if len(w) > 1]
