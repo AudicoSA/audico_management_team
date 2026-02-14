@@ -482,3 +482,86 @@ async def suggest_category(internal_product_id: str):
             "reasoning": f"Error generating suggestion: {str(e)}",
             "available": False
         }
+
+
+# ============================================================================
+# CLEANUP ENDPOINTS
+# ============================================================================
+
+@router.delete("/duplicates")
+async def delete_duplicate_skus():
+    """
+    Find and delete duplicate products (same supplier + SKU).
+    Keeps products with existing matches, or the oldest if none are matched.
+    """
+    sb = get_supabase_connector()
+    
+    try:
+        from collections import defaultdict
+        
+        # Get all products
+        all_products = sb.client.table("products")\
+            .select("id, sku, supplier_id, product_name, created_at")\
+            .execute()
+
+        # Group by (supplier_id, sku)
+        groups = defaultdict(list)
+        for p in all_products.data:
+            key = (p.get('supplier_id'), p.get('sku'))
+            groups[key].append(p)
+
+        # Find duplicates
+        duplicates = {k: v for k, v in groups.items() if len(v) > 1}
+
+        to_delete = []
+        matched_kept = 0
+        oldest_kept = 0
+
+        for (supplier_id, sku), products in duplicates.items():
+            # Sort by created_at (oldest first)
+            products.sort(key=lambda x: x.get('created_at', ''))
+
+            # Check which ones have matches
+            product_ids = [p['id'] for p in products]
+            matches = sb.client.table("product_matches")\
+                .select("internal_product_id")\
+                .in_("internal_product_id", product_ids)\
+                .execute()
+
+            matched_ids = {m['internal_product_id'] for m in matches.data}
+
+            # Keep matched or oldest, delete the rest
+            if matched_ids:
+                keep = next(p for p in products if p['id'] in matched_ids)
+                delete = [p for p in products if p['id'] != keep['id']]
+                matched_kept += 1
+            else:
+                keep = products[0]
+                delete = products[1:]
+                oldest_kept += 1
+
+            to_delete.extend(delete)
+
+        # Delete duplicates in batches
+        deleted_count = 0
+        if to_delete:
+            delete_ids = [p['id'] for p in to_delete]
+            for i in range(0, len(delete_ids), 100):
+                batch = delete_ids[i:i+100]
+                sb.client.table("products").delete().in_("id", batch).execute()
+                deleted_count += len(batch)
+
+        logger.info("duplicates_deleted", total=deleted_count, matched_kept=matched_kept, oldest_kept=oldest_kept)
+        
+        return {
+            "status": "success",
+            "duplicates_found": len(duplicates),
+            "products_deleted": deleted_count,
+            "matched_kept": matched_kept,
+            "oldest_kept": oldest_kept,
+            "message": f"Deleted {deleted_count} duplicate products, kept {matched_kept} with matches and {oldest_kept} oldest unmatched"
+        }
+        
+    except Exception as e:
+        logger.error("delete_duplicates_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
