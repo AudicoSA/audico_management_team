@@ -446,56 +446,28 @@ class OpenCartConnector:
                 connection.close()
 
     async def search_products_by_name(self, query: str) -> List[Dict]:
-        """Search products by name (partial match)."""
+        """Search products by name - EXACT and substring matching."""
         connection = None
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
-                import re
-                # Split by space, hyphen, underscore, dot, or forward slash
-                words = re.split(r'[\s\-_./]+', query)
-                
-                # Filter strictly alphanumeric for safety and length > 1
-                valid_words = [w for w in words if len(w) > 1]
-                
-                # IMPROVED: Prioritize model numbers (tokens containing digits)
-                # Model numbers like "M30x", "ATH-M30x", "G5" are more specific
-                model_tokens = [w for w in valid_words if any(c.isdigit() for c in w)]
-                brand_tokens = [w for w in valid_words if not any(c.isdigit() for c in w)]
-                
-                # Take model numbers first (up to 2), then brand tokens (up to 2)
-                search_tokens = model_tokens[:2] + brand_tokens[:2]
-                
-                # Fallback to original logic if no model numbers found
-                if not search_tokens:
-                    search_tokens = valid_words[:4]
-                
-                conditions = []
-                params = []
-                for word in search_tokens:
-                    # Clean purely to alphanumeric just in case, though regex did most work
-                    clean_word = "".join(c for c in word if c.isalnum())
-                    if len(clean_word) > 1: 
-                        conditions.append(f"pd.name LIKE %s")
-                        params.append(f"%{clean_word}%")
-                
-                if not conditions:
-                    return []
-                    
-                where_clause = " AND ".join(conditions)
-                
+                # SIMPLE: exact match OR substring match
                 sql = f"""
                     SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
                     FROM {self.prefix}product p
                     LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
                     LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                    WHERE {where_clause} AND pd.language_id = 1
-                    LIMIT 20
+                    WHERE (pd.name = %s OR pd.name LIKE %s)
+                    AND pd.language_id = 1
+                    LIMIT 50
                 """
-                cursor.execute(sql, tuple(params))
-                return cursor.fetchall()
+                cursor.execute(sql, (query, f"%{query}%"))
+                results = cursor.fetchall()
+
+                logger.info("search_products_by_name", query=query[:50], results=len(results))
+                return results
         except Exception as e:
-            logger.error("search_products_failed", query=query, error=str(e))
+            logger.error("search_products_failed", query=query[:50], error=str(e))
             return []
         finally:
             if connection:
