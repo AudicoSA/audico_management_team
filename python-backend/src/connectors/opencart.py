@@ -451,44 +451,49 @@ class OpenCartConnector:
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
-                # SIMPLE APPROACH: Direct substring search
-                # This handles exact matches and partial matches
+                import re
+                # Split by space, hyphen, underscore, dot, or forward slash
+                words = re.split(r'[\s\-_./]+', query)
+                
+                # Filter strictly alphanumeric for safety and length > 1
+                valid_words = [w for w in words if len(w) > 1]
+                
+                # IMPROVED: Prioritize model numbers (tokens containing digits)
+                # Model numbers like "M30x", "ATH-M30x", "G5" are more specific
+                model_tokens = [w for w in valid_words if any(c.isdigit() for c in w)]
+                brand_tokens = [w for w in valid_words if not any(c.isdigit() for c in w)]
+                
+                # Take model numbers first (up to 2), then brand tokens (up to 2)
+                search_tokens = model_tokens[:2] + brand_tokens[:2]
+                
+                # Fallback to original logic if no model numbers found
+                if not search_tokens:
+                    search_tokens = valid_words[:4]
+                
+                conditions = []
+                params = []
+                for word in search_tokens:
+                    # Clean purely to alphanumeric just in case, though regex did most work
+                    clean_word = "".join(c for c in word if c.isalnum())
+                    if len(clean_word) > 1: 
+                        conditions.append(f"pd.name LIKE %s")
+                        params.append(f"%{clean_word}%")
+                
+                if not conditions:
+                    return []
+                    
+                where_clause = " AND ".join(conditions)
+                
                 sql = f"""
                     SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
                     FROM {self.prefix}product p
                     LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
                     LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                    WHERE pd.name LIKE %s AND pd.language_id = 1
-                    LIMIT 50
+                    WHERE {where_clause} AND pd.language_id = 1
+                    LIMIT 20
                 """
-                cursor.execute(sql, (f"%{query}%",))
-                results = cursor.fetchall()
-
-                # If no direct match, try tokenized search as fallback
-                if not results:
-                    import re
-                    words = re.split(r'[\s\-_./]+', query)
-                    valid_words = [w for w in words if len(w) > 2]
-
-                    if valid_words:
-                        # Use most significant words (up to 3)
-                        search_words = valid_words[:3]
-                        conditions = [f"pd.name LIKE %s" for _ in search_words]
-                        params = [f"%{w}%" for w in search_words]
-                        where_clause = " AND ".join(conditions)
-
-                        sql = f"""
-                            SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
-                            FROM {self.prefix}product p
-                            LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
-                            LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                            WHERE {where_clause} AND pd.language_id = 1
-                            LIMIT 50
-                        """
-                        cursor.execute(sql, tuple(params))
-                        results = cursor.fetchall()
-
-                return results
+                cursor.execute(sql, tuple(params))
+                return cursor.fetchall()
         except Exception as e:
             logger.error("search_products_failed", query=query, error=str(e))
             return []
