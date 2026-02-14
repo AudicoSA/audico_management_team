@@ -35,35 +35,33 @@ class SupplierProduct(BaseModel):
 async def get_unmatched_products(limit: int = 20):
     """
     Get products from Supabase 'products' table that do NOT have an entry in 'product_matches'.
-    Optimized to handle large datasets without hitting query size limits.
+    Deduplicates by SKU to prevent the same product appearing multiple times.
     """
     sb = get_supabase_connector()
-    
+
     try:
-        # Strategy: Fetch products in pages until we find enough unmatched ones
-        # This handles the case where recent products are all matched
-        
         unmatched_data = []
+        seen_skus = set()  # Track SKUs we've already added to prevent loops
         offset = 0
-        fetch_batch = 200  # Fetch 200 at a time
-        max_iterations = 10  # Don't fetch more than 2000 products
-        
+        fetch_batch = 200
+        max_iterations = 10
+
         while len(unmatched_data) < limit and offset < (fetch_batch * max_iterations):
-            # 1. Get a batch of products
+            # 1. Get a batch of products (most recent first)
             products_response = sb.client.table("products")\
                 .select("id, sku, product_name, description, selling_price")\
                 .gt("selling_price", 0)\
                 .order("created_at", desc=True)\
                 .range(offset, offset + fetch_batch - 1)\
                 .execute()
-            
+
             if not products_response.data:
-                break  # No more products
-            
+                break
+
             # 2. Get product IDs from this batch
             product_ids = [p['id'] for p in products_response.data]
-            
-            # 3. Check which of these IDs are already matched (in smaller chunks)
+
+            # 3. Check which are already matched
             matched_ids = set()
             for i in range(0, len(product_ids), 50):
                 chunk = product_ids[i:i+50]
@@ -72,26 +70,69 @@ async def get_unmatched_products(limit: int = 20):
                     .in_("internal_product_id", chunk)\
                     .execute()
                 matched_ids.update(m['internal_product_id'] for m in matches_response.data)
-            
-            # 4. Filter and format results
+
+            # 4. Also check if ANY duplicate of this SKU is already matched
+            # This prevents showing duplicates of already-linked products
+            batch_skus = list(set(p.get('sku', '') for p in products_response.data if p.get('sku')))
+            matched_skus = set()
+            for i in range(0, len(batch_skus), 50):
+                sku_chunk = batch_skus[i:i+50]
+                # Find all product IDs with these SKUs
+                sku_products = sb.client.table("products")\
+                    .select("id, sku")\
+                    .in_("sku", sku_chunk)\
+                    .execute()
+                sku_to_ids = {}
+                for sp in sku_products.data:
+                    sku_to_ids.setdefault(sp['sku'], []).append(sp['id'])
+
+                # Check if ANY id for each SKU is matched
+                all_ids_for_skus = [sp['id'] for sp in sku_products.data]
+                for j in range(0, len(all_ids_for_skus), 50):
+                    id_chunk = all_ids_for_skus[j:j+50]
+                    m_resp = sb.client.table("product_matches")\
+                        .select("internal_product_id")\
+                        .in_("internal_product_id", id_chunk)\
+                        .execute()
+                    for m in m_resp.data:
+                        # Find which SKU this matched ID belongs to
+                        for sku, ids in sku_to_ids.items():
+                            if m['internal_product_id'] in ids:
+                                matched_skus.add(sku)
+
+            # 5. Filter, deduplicate by SKU, and format results
             for p in products_response.data:
-                if p['id'] not in matched_ids:
-                    unmatched_data.append({
-                        "id": p['id'],
-                        "sku": p['sku'],
-                        "name": p['product_name'], 
-                        "description": p.get('description'),
-                        "price": p.get('selling_price', 0),
-                        "supplier": "Internal" 
-                    })
-                    
-                    if len(unmatched_data) >= limit:
-                        break
-            
+                sku = p.get('sku', '')
+
+                # Skip if this specific ID is matched
+                if p['id'] in matched_ids:
+                    continue
+
+                # Skip if ANY duplicate of this SKU is already matched
+                if sku in matched_skus:
+                    continue
+
+                # Skip if we've already added this SKU (dedup within results)
+                if sku in seen_skus:
+                    continue
+
+                seen_skus.add(sku)
+                unmatched_data.append({
+                    "id": p['id'],
+                    "sku": sku,
+                    "name": p['product_name'],
+                    "description": p.get('description'),
+                    "price": p.get('selling_price', 0),
+                    "supplier": "Internal"
+                })
+
+                if len(unmatched_data) >= limit:
+                    break
+
             offset += fetch_batch
-        
+
         return unmatched_data
-        
+
     except Exception as e:
         logger.error("fetch_unmatched_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -124,21 +165,52 @@ async def get_candidates(internal_product_id: str):
 async def link_product(request: LinkRequest):
     """
     Create a link in product_matches table.
+    Also links ALL duplicate rows with the same SKU to prevent them reappearing.
     """
     sb = get_supabase_connector()
-    
+
     try:
+        # 1. Link the selected product
         data = {
             "internal_product_id": request.internal_product_id,
             "opencart_product_id": request.opencart_product_id,
             "match_type": request.match_type,
             "score": request.confidence
         }
-        
+
         sb.client.table("product_matches").insert(data).execute()
         logger.info("product_linked", **data)
+
+        # 2. Find and link ALL duplicates of the same SKU
+        product = sb.client.table("products").select("sku").eq("id", request.internal_product_id).single().execute()
+        if product.data and product.data.get('sku'):
+            sku = product.data['sku']
+            # Find all products with same SKU
+            dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
+            dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
+
+            if dupe_ids:
+                # Check which dupes are already matched
+                existing = sb.client.table("product_matches")\
+                    .select("internal_product_id")\
+                    .in_("internal_product_id", dupe_ids)\
+                    .execute()
+                already_matched = set(m['internal_product_id'] for m in existing.data)
+
+                # Link unmatched dupes as "duplicate_linked"
+                for dupe_id in dupe_ids:
+                    if dupe_id not in already_matched:
+                        sb.client.table("product_matches").insert({
+                            "internal_product_id": dupe_id,
+                            "opencart_product_id": request.opencart_product_id,
+                            "match_type": "duplicate_linked",
+                            "score": request.confidence
+                        }).execute()
+
+                logger.info("duplicates_linked", sku=sku, count=len(dupe_ids) - len(already_matched))
+
         return {"status": "success", "data": data}
-        
+
     except Exception as e:
         logger.error("link_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -147,9 +219,10 @@ async def link_product(request: LinkRequest):
 async def ignore_product(request: IgnoreRequest):
     """
     Ignore a product by creating a match entry with NULL opencart_id.
+    Also ignores ALL duplicate rows with the same SKU.
     """
     sb = get_supabase_connector()
-    
+
     try:
         data = {
             "internal_product_id": request.internal_product_id,
@@ -157,11 +230,37 @@ async def ignore_product(request: IgnoreRequest):
             "match_type": "ignored",
             "score": 0
         }
-        
+
         sb.client.table("product_matches").insert(data).execute()
         logger.info("product_ignored", internal_id=request.internal_product_id)
+
+        # Also ignore ALL duplicates of the same SKU
+        product = sb.client.table("products").select("sku").eq("id", request.internal_product_id).single().execute()
+        if product.data and product.data.get('sku'):
+            sku = product.data['sku']
+            dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
+            dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
+
+            if dupe_ids:
+                existing = sb.client.table("product_matches")\
+                    .select("internal_product_id")\
+                    .in_("internal_product_id", dupe_ids)\
+                    .execute()
+                already_matched = set(m['internal_product_id'] for m in existing.data)
+
+                for dupe_id in dupe_ids:
+                    if dupe_id not in already_matched:
+                        sb.client.table("product_matches").insert({
+                            "internal_product_id": dupe_id,
+                            "opencart_product_id": None,
+                            "match_type": "ignored",
+                            "score": 0
+                        }).execute()
+
+                logger.info("duplicates_ignored", sku=sku, count=len(dupe_ids) - len(already_matched))
+
         return {"status": "success", "data": data}
-        
+
     except Exception as e:
         logger.error("ignore_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
