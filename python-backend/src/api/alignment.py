@@ -664,13 +664,13 @@ async def clear_unmatched_queue(batch_limit: int = 1000):
         batch_limit = min(batch_limit, 5000)
         logger.info("clear_unmatched_started", batch_limit=batch_limit)
 
-        # Fetch a batch of recent unmatched products (just IDs for efficiency)
+        # Fetch a batch of products (any products, not just recent)
+        # We fetch 2x batch_limit to account for already-matched ones
         products_response = sb.client.table("products")\
             .select("id")\
             .gt("selling_price", 0)\
-            .order("created_at", desc=True)\
             .limit(batch_limit * 2)\
-            .execute()  # Fetch 2x to account for already-matched ones
+            .execute()
 
         if not products_response.data:
             return {
