@@ -649,65 +649,60 @@ async def link_product_manual(request: dict):
 
 
 @router.post("/clear-unmatched")
-async def clear_unmatched_queue():
+async def clear_unmatched_queue(batch_limit: int = 1000):
     """
-    Bulk ignore all products in the unmatched queue by marking them as 'ignored'.
-    This is useful for clearing the queue when products have been manually processed
-    or when starting fresh after fixing issues.
+    Bulk ignore unmatched products by marking them as 'ignored'.
+    Processes products in batches to avoid timeout.
+
+    Query params:
+    - batch_limit: Maximum number of products to process (default 1000, max 5000)
     """
     sb = get_supabase_connector()
 
     try:
-        # Fetch all unmatched products
-        all_unmatched = []
-        offset = 0
-        fetch_batch = 200
-        max_iterations = 50  # Up to 10,000 products
+        # Limit to prevent abuse
+        batch_limit = min(batch_limit, 5000)
+        logger.info("clear_unmatched_started", batch_limit=batch_limit)
 
-        logger.info("clear_unmatched_started")
+        # Fetch a batch of recent unmatched products (just IDs for efficiency)
+        products_response = sb.client.table("products")\
+            .select("id")\
+            .gt("selling_price", 0)\
+            .order("created_at", desc=True)\
+            .limit(batch_limit * 2)\
+            .execute()  # Fetch 2x to account for already-matched ones
 
-        while offset < (fetch_batch * max_iterations):
-            # Fetch batch of products
-            products_response = sb.client.table("products")\
-                .select("id")\
-                .gt("selling_price", 0)\
-                .order("created_at", desc=True)\
-                .range(offset, offset + fetch_batch - 1)\
+        if not products_response.data:
+            return {
+                "status": "success",
+                "ignored": 0,
+                "message": "No products found to ignore"
+            }
+
+        # Get all product IDs
+        all_product_ids = [p['id'] for p in products_response.data]
+
+        # Check which are already matched (in chunks for efficiency)
+        matched_ids = set()
+        for i in range(0, len(all_product_ids), 100):
+            chunk = all_product_ids[i:i+100]
+            matches_response = sb.client.table("product_matches")\
+                .select("internal_product_id")\
+                .in_("internal_product_id", chunk)\
                 .execute()
+            matched_ids.update(m['internal_product_id'] for m in matches_response.data)
 
-            if not products_response.data:
-                break
+        # Get truly unmatched IDs
+        unmatched_ids = [pid for pid in all_product_ids if pid not in matched_ids][:batch_limit]
 
-            # Get product IDs from this batch
-            product_ids = [p['id'] for p in products_response.data]
-
-            # Check which are already matched
-            matched_ids = set()
-            for i in range(0, len(product_ids), 50):
-                chunk = product_ids[i:i+50]
-                matches_response = sb.client.table("product_matches")\
-                    .select("internal_product_id")\
-                    .in_("internal_product_id", chunk)\
-                    .execute()
-                matched_ids.update(m['internal_product_id'] for m in matches_response.data)
-
-            # Add unmatched to list
-            unmatched_in_batch = [pid for pid in product_ids if pid not in matched_ids]
-            all_unmatched.extend(unmatched_in_batch)
-
-            offset += fetch_batch
-
-            if len(products_response.data) < fetch_batch:
-                break
-
-        if not all_unmatched:
+        if not unmatched_ids:
             return {
                 "status": "success",
                 "ignored": 0,
                 "message": "No unmatched products found"
             }
 
-        # Bulk insert ignore records
+        # Create ignore records
         ignore_records = [
             {
                 "internal_product_id": pid,
@@ -715,7 +710,7 @@ async def clear_unmatched_queue():
                 "match_type": "ignored",
                 "score": 0
             }
-            for pid in all_unmatched
+            for pid in unmatched_ids
         ]
 
         # Insert in batches of 100
@@ -730,6 +725,7 @@ async def clear_unmatched_queue():
         return {
             "status": "success",
             "ignored": inserted_count,
+            "total_remaining": f"Call again if more products need clearing",
             "message": f"Successfully ignored {inserted_count} unmatched products"
         }
 
