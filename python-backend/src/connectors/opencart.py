@@ -194,12 +194,10 @@ class OpenCartConnector:
 
     async def get_product_by_sku(self, sku: str) -> Optional[Dict[str, Any]]:
         """Get product details by SKU from OpenCart database.
-
-        Searches both sku and model fields for a match.
-
+        
         Args:
             sku: Product SKU
-
+            
         Returns:
             Product dict with id, model, sku, price, quantity or None
         """
@@ -207,24 +205,23 @@ class OpenCartConnector:
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
-                # Search both sku and model fields
                 sql = f"""
-                    SELECT
+                    SELECT 
                         product_id, model, sku, price, quantity, status
                     FROM {self.prefix}product
-                    WHERE sku = %s OR model = %s
+                    WHERE sku = %s
                     LIMIT 1
                 """
-                cursor.execute(sql, (sku, sku))
+                cursor.execute(sql, (sku,))
                 product = cursor.fetchone()
-
+                
                 if product:
                     logger.info("product_found_by_sku", sku=sku, product_id=product['product_id'])
                     return product
                 else:
                     logger.warning("product_not_found", sku=sku)
                     return None
-
+                    
         except Exception as e:
             logger.error("get_product_by_sku_error", sku=sku, error=str(e))
             return None
@@ -239,7 +236,7 @@ class OpenCartConnector:
             connection = self._get_connection()
             with connection.cursor() as cursor:
                 sql = f"""
-                    SELECT
+                    SELECT 
                         product_id, model, sku, price, quantity, status
                     FROM {self.prefix}product
                     WHERE product_id = %s
@@ -251,65 +248,6 @@ class OpenCartConnector:
         except Exception as e:
             logger.error("get_product_by_id_error", id=product_id, error=str(e))
             return None
-        finally:
-            if connection:
-                connection.close()
-
-    async def fuzzy_search_by_sku(self, sku: str) -> List[Dict[str, Any]]:
-        """Search products with fuzzy SKU matching (normalized alphanumeric comparison).
-
-        This handles SKU variations like:
-        - "D 80:4L" vs "D80-4L"
-        - "LAB-D80" vs "LABD80"
-
-        Args:
-            sku: Product SKU to search for
-
-        Returns:
-            List of matching products
-        """
-        connection = None
-        try:
-            # Normalize: remove spaces, hyphens, colons, slashes, dots
-            import re
-            normalized_sku = re.sub(r'[\s\-:/.]+', '', sku.lower())
-
-            if not normalized_sku:
-                return []
-
-            connection = self._get_connection()
-            with connection.cursor() as cursor:
-                # Get all products and compare normalized SKUs
-                # For large datasets, this could be optimized with REGEXP in SQL
-                sql = f"""
-                    SELECT p.product_id, p.model, p.sku, p.price, p.quantity, p.status,
-                           pd.name, m.name as manufacturer
-                    FROM {self.prefix}product p
-                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id AND pd.language_id = 1)
-                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                    WHERE p.sku IS NOT NULL OR p.model IS NOT NULL
-                """
-                cursor.execute(sql)
-                all_products = cursor.fetchall()
-
-                matches = []
-                for product in all_products:
-                    p_sku = product.get('sku', '') or ''
-                    p_model = product.get('model', '') or ''
-
-                    # Normalize both sku and model fields
-                    norm_p_sku = re.sub(r'[\s\-:/.]+', '', p_sku.lower())
-                    norm_p_model = re.sub(r'[\s\-:/.]+', '', p_model.lower())
-
-                    if normalized_sku == norm_p_sku or normalized_sku == norm_p_model:
-                        matches.append(product)
-
-                logger.info("fuzzy_sku_search", sku=sku, matches=len(matches))
-                return matches
-
-        except Exception as e:
-            logger.error("fuzzy_search_by_sku_error", sku=sku, error=str(e))
-            return []
         finally:
             if connection:
                 connection.close()
@@ -514,9 +452,8 @@ class OpenCartConnector:
             connection = self._get_connection()
             with connection.cursor() as cursor:
                 import re
-                # Split by space, hyphen, underscore, dot, colon, or forward slash
-                # This ensures "80:4L" becomes ["80", "4L"] for better matching
-                words = re.split(r'[\s\-_.:/ ]+', query)
+                # Split by space, hyphen, underscore, dot, or forward slash
+                words = re.split(r'[\s\-_./]+', query)
                 
                 # Filter strictly alphanumeric for safety and length > 1
                 valid_words = [w for w in words if len(w) > 1]
