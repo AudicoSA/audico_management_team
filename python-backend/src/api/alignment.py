@@ -181,33 +181,37 @@ async def link_product(request: LinkRequest):
         sb.client.table("product_matches").insert(data).execute()
         logger.info("product_linked", **data)
 
-        # 2. Find and link ALL duplicates of the same SKU
-        product = sb.client.table("products").select("sku").eq("id", request.internal_product_id).single().execute()
-        if product.data and product.data.get('sku'):
-            sku = product.data['sku']
-            # Find all products with same SKU
-            dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
-            dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
+        # 2. Find and link ALL duplicates of the same SKU (non-fatal)
+        try:
+            product = sb.client.table("products").select("sku")\
+                .eq("id", request.internal_product_id).limit(1).execute()
+            if product.data and product.data[0].get('sku'):
+                sku = product.data[0]['sku']
+                dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
+                dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
 
-            if dupe_ids:
-                # Check which dupes are already matched
-                existing = sb.client.table("product_matches")\
-                    .select("internal_product_id")\
-                    .in_("internal_product_id", dupe_ids)\
-                    .execute()
-                already_matched = set(m['internal_product_id'] for m in existing.data)
+                if dupe_ids:
+                    existing = sb.client.table("product_matches")\
+                        .select("internal_product_id")\
+                        .in_("internal_product_id", dupe_ids)\
+                        .execute()
+                    already_matched = set(m['internal_product_id'] for m in existing.data)
 
-                # Link unmatched dupes as "duplicate_linked"
-                for dupe_id in dupe_ids:
-                    if dupe_id not in already_matched:
-                        sb.client.table("product_matches").insert({
-                            "internal_product_id": dupe_id,
-                            "opencart_product_id": request.opencart_product_id,
-                            "match_type": "duplicate_linked",
-                            "score": request.confidence
-                        }).execute()
+                    for dupe_id in dupe_ids:
+                        if dupe_id not in already_matched:
+                            try:
+                                sb.client.table("product_matches").insert({
+                                    "internal_product_id": dupe_id,
+                                    "opencart_product_id": request.opencart_product_id,
+                                    "match_type": "duplicate_linked",
+                                    "score": request.confidence
+                                }).execute()
+                            except Exception:
+                                pass
 
-                logger.info("duplicates_linked", sku=sku, count=len(dupe_ids) - len(already_matched))
+                    logger.info("duplicates_linked", sku=sku, count=len(dupe_ids) - len(already_matched))
+        except Exception as e:
+            logger.warning("duplicate_link_failed_nonfatal", error=str(e))
 
         return {"status": "success", "data": data}
 
@@ -219,7 +223,7 @@ async def link_product(request: LinkRequest):
 async def ignore_product(request: IgnoreRequest):
     """
     Ignore a product by creating a match entry with NULL opencart_id.
-    Also ignores ALL duplicate rows with the same SKU.
+    Also ignores ALL duplicate rows with the same SKU (non-fatal if dedup fails).
     """
     sb = get_supabase_connector()
 
@@ -234,30 +238,37 @@ async def ignore_product(request: IgnoreRequest):
         sb.client.table("product_matches").insert(data).execute()
         logger.info("product_ignored", internal_id=request.internal_product_id)
 
-        # Also ignore ALL duplicates of the same SKU
-        product = sb.client.table("products").select("sku").eq("id", request.internal_product_id).single().execute()
-        if product.data and product.data.get('sku'):
-            sku = product.data['sku']
-            dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
-            dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
+        # Also ignore ALL duplicates of the same SKU (non-fatal)
+        try:
+            product = sb.client.table("products").select("sku")\
+                .eq("id", request.internal_product_id).limit(1).execute()
+            if product.data and product.data[0].get('sku'):
+                sku = product.data[0]['sku']
+                dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
+                dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
 
-            if dupe_ids:
-                existing = sb.client.table("product_matches")\
-                    .select("internal_product_id")\
-                    .in_("internal_product_id", dupe_ids)\
-                    .execute()
-                already_matched = set(m['internal_product_id'] for m in existing.data)
+                if dupe_ids:
+                    existing = sb.client.table("product_matches")\
+                        .select("internal_product_id")\
+                        .in_("internal_product_id", dupe_ids)\
+                        .execute()
+                    already_matched = set(m['internal_product_id'] for m in existing.data)
 
-                for dupe_id in dupe_ids:
-                    if dupe_id not in already_matched:
-                        sb.client.table("product_matches").insert({
-                            "internal_product_id": dupe_id,
-                            "opencart_product_id": None,
-                            "match_type": "ignored",
-                            "score": 0
-                        }).execute()
+                    for dupe_id in dupe_ids:
+                        if dupe_id not in already_matched:
+                            try:
+                                sb.client.table("product_matches").insert({
+                                    "internal_product_id": dupe_id,
+                                    "opencart_product_id": None,
+                                    "match_type": "ignored",
+                                    "score": 0
+                                }).execute()
+                            except Exception:
+                                pass  # Skip individual dupe failures
 
-                logger.info("duplicates_ignored", sku=sku, count=len(dupe_ids) - len(already_matched))
+                    logger.info("duplicates_ignored", sku=sku, count=len(dupe_ids) - len(already_matched))
+        except Exception as e:
+            logger.warning("duplicate_ignore_failed_nonfatal", error=str(e))
 
         return {"status": "success", "data": data}
 
@@ -349,7 +360,8 @@ async def auto_link_products(request: AutoLinkRequest):
 
 class CreateRequest(BaseModel):
     internal_product_id: str
-    category_ids: Optional[List[int]] = None  # Optional category IDs for the new product
+    name: Optional[str] = None  # Optional name override from frontend
+    category_ids: Optional[List[int]] = None
 
 @router.post("/create")
 async def create_product(request: CreateRequest):
@@ -357,31 +369,35 @@ async def create_product(request: CreateRequest):
     Add product to new_products_queue and mark as pending_creation.
     """
     sb = get_supabase_connector()
-    
+
     try:
         # 1. Fetch product details
-        p_response = sb.client.table("products").select("*").eq("id", request.internal_product_id).single().execute()
-        product = p_response.data
-        
-        if not product:
+        p_response = sb.client.table("products").select("*")\
+            .eq("id", request.internal_product_id).limit(1).execute()
+
+        if not p_response.data:
             raise HTTPException(status_code=404, detail="Product not found")
 
+        product = p_response.data[0]
+
         # 2. Prepare Queue Data
-        # A. Get Supplier Name
         supplier_name = "Internal-Alignment"
         if product.get("supplier_id"):
-            sup_res = sb.client.table("suppliers").select("name").eq("id", product.get("supplier_id")).single().execute()
-            if sup_res.data:
-                supplier_name = sup_res.data['name']
-        
-        # Use Product Name directly as it comes from the feed (e.g. "Ubiquiti UniFi...")
-        # Description often contains HTML or is too long for a name.
-        final_name = product.get("product_name")
+            try:
+                sup_res = sb.client.table("suppliers").select("name")\
+                    .eq("id", product.get("supplier_id")).limit(1).execute()
+                if sup_res.data:
+                    supplier_name = sup_res.data[0]['name']
+            except Exception:
+                pass  # Use default supplier name
 
-        # User Logic: Round cost price to nearest R10 (floor/no cents)
-        raw_price = product.get("cost_price") or product.get("selling_price", 0)
-        rounded_price = int(raw_price // 10) * 10
-        
+        # Use name from frontend if provided, else from DB
+        final_name = request.name or product.get("product_name") or product.get("name", "Unknown")
+
+        # Round cost price to nearest R10
+        raw_price = product.get("cost_price") or product.get("selling_price", 0) or 0
+        rounded_price = int(float(raw_price) // 10) * 10
+
         queue_data = {
             "supplier_name": supplier_name,
             "sku": product.get("sku"),
@@ -390,12 +406,12 @@ async def create_product(request: CreateRequest):
             "selling_price": product.get("selling_price", 0),
             "stock_level": product.get("total_stock", 0),
             "status": "pending",
-            "category_ids": request.category_ids or []  # Store category IDs for product creation
+            "category_ids": request.category_ids or []
         }
-        
+
         sb.client.table("new_products_queue").insert(queue_data).execute()
 
-        # 3. Mark as matched (pending_creation) so it leaves the unmatched list
+        # 3. Mark as matched so it leaves the unmatched list
         match_data = {
             "internal_product_id": request.internal_product_id,
             "opencart_product_id": None,
@@ -403,10 +419,31 @@ async def create_product(request: CreateRequest):
             "score": 0
         }
         sb.client.table("product_matches").insert(match_data).execute()
-        
-        logger.info("product_queued_for_creation", internal_id=request.internal_product_id)
+
+        # 4. Also mark duplicates (non-fatal)
+        try:
+            sku = product.get("sku")
+            if sku:
+                dupes = sb.client.table("products").select("id").eq("sku", sku).execute()
+                dupe_ids = [d['id'] for d in dupes.data if d['id'] != request.internal_product_id]
+                for dupe_id in dupe_ids:
+                    try:
+                        sb.client.table("product_matches").insert({
+                            "internal_product_id": dupe_id,
+                            "opencart_product_id": None,
+                            "match_type": "pending_creation",
+                            "score": 0
+                        }).execute()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        logger.info("product_queued_for_creation", internal_id=request.internal_product_id, name=final_name)
         return {"status": "success", "data": queue_data}
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("create_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
