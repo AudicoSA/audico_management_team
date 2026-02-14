@@ -446,25 +446,37 @@ class OpenCartConnector:
                 connection.close()
 
     async def search_products_by_name(self, query: str) -> List[Dict]:
-        """Search products by name - EXACT and substring matching."""
+        """Search products by name - flexible multi-token matching."""
         connection = None
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
-                # SIMPLE: exact match OR substring match
+                import re
+                # Extract significant words (len > 2, keep alphanumeric + numbers)
+                words = re.findall(r'\w+', query.lower())
+                sig_words = [w for w in words if len(w) > 2 or any(c.isdigit() for c in w)]
+
+                if not sig_words:
+                    return []
+
+                # Search for products containing ALL significant words (AND logic)
+                conditions = [f"LOWER(pd.name) LIKE %s" for _ in sig_words]
+                params = [f"%{w}%" for w in sig_words]
+                where_clause = " AND ".join(conditions)
+
                 sql = f"""
                     SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
                     FROM {self.prefix}product p
                     LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
                     LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                    WHERE (pd.name = %s OR pd.name LIKE %s)
+                    WHERE {where_clause}
                     AND pd.language_id = 1
                     LIMIT 50
                 """
-                cursor.execute(sql, (query, f"%{query}%"))
+                cursor.execute(sql, tuple(params))
                 results = cursor.fetchall()
 
-                logger.info("search_products_by_name", query=query[:50], results=len(results))
+                logger.info("search_products_by_name", query=query[:50], tokens=sig_words, results=len(results))
                 return results
         except Exception as e:
             logger.error("search_products_failed", query=query[:50], error=str(e))
