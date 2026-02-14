@@ -589,17 +589,42 @@ async def link_product_manual(request: dict):
         
         # Extract product_id from URL or use directly
         import re
+        import requests as req
+
+        # Try different extraction methods
+        opencart_product_id = None
+
+        # Method 1: Check for product_id= in URL
         if isinstance(url_or_id, str) and "product_id=" in url_or_id:
             match = re.search(r'product_id=(\d+)', url_or_id)
             if match:
                 opencart_product_id = int(match.group(1))
-            else:
-                raise HTTPException(status_code=400, detail="Could not extract product_id from URL")
-        else:
+
+        # Method 2: Try direct integer conversion
+        if opencart_product_id is None:
             try:
                 opencart_product_id = int(url_or_id)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid product_id format")
+            except (ValueError, TypeError):
+                pass
+
+        # Method 3: Fetch SEO-friendly URL and extract product_id from HTML
+        if opencart_product_id is None and isinstance(url_or_id, str) and url_or_id.startswith('http'):
+            try:
+                response = req.get(url_or_id, timeout=10)
+                # Look for product_id in the HTML (OpenCart often includes it in forms, links, etc.)
+                id_match = re.search(r'product_id["\']?\s*[:=]\s*["\']?(\d+)', response.text)
+                if id_match:
+                    opencart_product_id = int(id_match.group(1))
+                else:
+                    # Try another pattern - input field with name="product_id"
+                    id_match2 = re.search(r'<input[^>]+name=["\']product_id["\'][^>]+value=["\'](\d+)["\']', response.text)
+                    if id_match2:
+                        opencart_product_id = int(id_match2.group(1))
+            except Exception as e:
+                logger.warning("url_fetch_failed", url=url_or_id, error=str(e))
+
+        if opencart_product_id is None:
+            raise HTTPException(status_code=400, detail="Could not extract product_id. Please provide product ID number or URL with ?product_id=")
         
         # Create the link
         link_data = {
