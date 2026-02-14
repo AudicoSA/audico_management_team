@@ -32,11 +32,11 @@ class AlignmentEngine:
     async def find_matches(self, supplier_product: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
         """
         Find OpenCart product candidates for a given supplier product.
-        
+
         Args:
             supplier_product: Dict containing 'sku', 'name', 'price'
             limit: Max number of candidates to return
-            
+
         Returns:
             List of candidate dicts with 'score', 'price_diff', 'opencart_product'
         """
@@ -44,15 +44,42 @@ class AlignmentEngine:
         s_name = supplier_product.get('name', '')
         s_price = float(supplier_product.get('price', 0) or 0)
 
-        candidates = []
+        oc_products = []
 
-        # 1. Exact SKU Match (100% Confidence)
-        # Note: OpenCartConnector needs a method to get by SKU, or we search by model
-        # For now, let's assume we search by name first to get a broad list, 
-        # OR we implement a specific get_by_sku in OpenCartConnector if it doesn't exist.
-        # Let's try to search by name in OpenCart to get candidates.
-        
-        oc_products = await self.oc.search_products_by_name(s_name)
+        # 1. FIRST: Try exact SKU match
+        if s_sku:
+            exact_match = await self.oc.get_product_by_sku(s_sku)
+            if exact_match:
+                # Get product description and manufacturer for name
+                connection = self.oc._get_connection()
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(f"""
+                            SELECT pd.name, m.name as manufacturer
+                            FROM {self.oc.prefix}product_description pd
+                            LEFT JOIN {self.oc.prefix}product p ON pd.product_id = p.product_id
+                            LEFT JOIN {self.oc.prefix}manufacturer m ON p.manufacturer_id = m.manufacturer_id
+                            WHERE pd.product_id = %s AND pd.language_id = 1
+                        """, (exact_match['product_id'],))
+                        desc_result = cursor.fetchone()
+                        if desc_result:
+                            exact_match['name'] = desc_result['name']
+                            exact_match['manufacturer'] = desc_result.get('manufacturer')
+                finally:
+                    connection.close()
+
+                oc_products.append(exact_match)
+                logger.info("exact_sku_match_found", sku=s_sku, product_id=exact_match['product_id'])
+
+        # 2. Then search by name for additional candidates
+        name_results = await self.oc.search_products_by_name(s_name)
+
+        # Combine results (avoid duplicates if SKU match is also in name results)
+        existing_ids = {p['product_id'] for p in oc_products}
+        for p in name_results:
+            if p['product_id'] not in existing_ids:
+                oc_products.append(p)
+                existing_ids.add(p['product_id'])
         
         # If no results by name, try searching by SKU/Model if possible, 
         # but usually search_products_by_name does a simplified query.

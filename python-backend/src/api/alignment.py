@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from src.aligner.engine import AlignmentEngine
+from src.aligner.duplicate_detector import DuplicateDetector
 from src.connectors.supabase import get_supabase_connector, SupabaseConnector
 from src.utils.logging import AgentLogger
 
@@ -32,6 +33,95 @@ class SupplierProduct(BaseModel):
     price: float
     supplier: Optional[str] = None
 
+@router.get("/unmatched/grouped")
+async def get_unmatched_products_grouped(limit: int = 50, similarity_threshold: int = 90):
+    """
+    Get unmatched products grouped by name similarity.
+    Returns product groups where each group may contain multiple supplier variants.
+
+    Args:
+        limit: Maximum number of unmatched products to fetch before grouping
+        similarity_threshold: Name similarity threshold (0-100) for grouping
+    """
+    sb = get_supabase_connector()
+    detector = DuplicateDetector(similarity_threshold=similarity_threshold)
+
+    try:
+        # Fetch unmatched products (reuse existing logic)
+        unmatched_data = []
+        offset = 0
+        fetch_batch = 200
+        max_iterations = 10
+
+        while len(unmatched_data) < limit and offset < (fetch_batch * max_iterations):
+            products_response = sb.client.table("products")\
+                .select("id, sku, product_name, description, selling_price, supplier_id, total_stock")\
+                .gt("selling_price", 0)\
+                .order("created_at", desc=True)\
+                .range(offset, offset + fetch_batch - 1)\
+                .execute()
+
+            if not products_response.data:
+                break
+
+            product_ids = [p['id'] for p in products_response.data]
+
+            # Check which are already matched
+            matched_ids = set()
+            for i in range(0, len(product_ids), 50):
+                chunk = product_ids[i:i+50]
+                matches_response = sb.client.table("product_matches")\
+                    .select("internal_product_id")\
+                    .in_("internal_product_id", chunk)\
+                    .execute()
+                matched_ids.update(m['internal_product_id'] for m in matches_response.data)
+
+            # Get supplier names
+            supplier_ids = list(set(p.get('supplier_id') for p in products_response.data if p.get('supplier_id')))
+            supplier_map = {}
+            if supplier_ids:
+                suppliers_resp = sb.client.table("suppliers")\
+                    .select("id, name")\
+                    .in_("id", supplier_ids)\
+                    .execute()
+                supplier_map = {s['id']: s['name'] for s in suppliers_resp.data}
+
+            # Filter and format
+            for p in products_response.data:
+                if p['id'] not in matched_ids:
+                    supplier_name = supplier_map.get(p.get('supplier_id'), "Unknown")
+
+                    unmatched_data.append({
+                        "id": p['id'],
+                        "sku": p['sku'],
+                        "name": html.unescape(p['product_name'] or ""),
+                        "description": p.get('description'),
+                        "price": p.get('selling_price', 0),
+                        "stock": p.get('total_stock', 0),
+                        "supplier": supplier_name,
+                        "supplier_id": p.get('supplier_id')
+                    })
+
+                    if len(unmatched_data) >= limit:
+                        break
+
+            offset += fetch_batch
+
+        # Group duplicates
+        groups = detector.group_duplicates(unmatched_data)
+
+        return {
+            "total_products": len(unmatched_data),
+            "total_groups": len(groups),
+            "duplicate_groups": sum(1 for g in groups if g['is_duplicate']),
+            "groups": groups
+        }
+
+    except Exception as e:
+        logger.error("fetch_unmatched_grouped_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/unmatched")
 async def get_unmatched_products(limit: int = 20):
     """
@@ -48,22 +138,22 @@ async def get_unmatched_products(limit: int = 20):
         offset = 0
         fetch_batch = 200  # Fetch 200 at a time
         max_iterations = 10  # Don't fetch more than 2000 products
-        
+
         while len(unmatched_data) < limit and offset < (fetch_batch * max_iterations):
-            # 1. Get a batch of products
+            # 1. Get a batch of products with supplier_id
             products_response = sb.client.table("products")\
-                .select("id, sku, product_name, description, selling_price")\
+                .select("id, sku, product_name, description, selling_price, supplier_id")\
                 .gt("selling_price", 0)\
                 .order("created_at", desc=True)\
                 .range(offset, offset + fetch_batch - 1)\
                 .execute()
-            
+
             if not products_response.data:
                 break  # No more products
-            
+
             # 2. Get product IDs from this batch
             product_ids = [p['id'] for p in products_response.data]
-            
+
             # 3. Check which of these IDs are already matched (in smaller chunks)
             matched_ids = set()
             for i in range(0, len(product_ids), 50):
@@ -73,23 +163,36 @@ async def get_unmatched_products(limit: int = 20):
                     .in_("internal_product_id", chunk)\
                     .execute()
                 matched_ids.update(m['internal_product_id'] for m in matches_response.data)
-            
-            # 4. Filter and format results
+
+            # 4. Get all unique supplier IDs and fetch supplier names (batch query)
+            supplier_ids = list(set(p.get('supplier_id') for p in products_response.data if p.get('supplier_id')))
+            supplier_map = {}
+            if supplier_ids:
+                suppliers_resp = sb.client.table("suppliers")\
+                    .select("id, name")\
+                    .in_("id", supplier_ids)\
+                    .execute()
+                supplier_map = {s['id']: s['name'] for s in suppliers_resp.data}
+
+            # 5. Filter and format results
             for p in products_response.data:
                 if p['id'] not in matched_ids:
+                    supplier_name = supplier_map.get(p.get('supplier_id'), "Unknown")
+
                     unmatched_data.append({
                         "id": p['id'],
                         "sku": p['sku'],
                         # FIX: Decode HTML entities for display
-                        "name": html.unescape(p['product_name'] or ""), 
+                        "name": html.unescape(p['product_name'] or ""),
                         "description": p.get('description'),
                         "price": p.get('selling_price', 0),
-                        "supplier": "Internal" 
+                        "supplier": supplier_name,
+                        "supplier_id": p.get('supplier_id')
                     })
-                    
+
                     if len(unmatched_data) >= limit:
                         break
-            
+
             offset += fetch_batch
         
         return unmatched_data
