@@ -13,7 +13,7 @@ from src.utils.logging import AgentLogger
 logger = AgentLogger("MCPSyncOrchestrator")
 
 # MCP HTTP Service URL (configured via Railway environment variable)
-MCP_SERVICE_URL = os.getenv("MCP_SERVICE_URL", "http://localhost:3000")
+MCP_SERVICE_URL = os.getenv("MCP_SERVICE_URL", "https://mcp-http-service-production-b30b.up.railway.app")
 
 
 # MCP servers to sync (in order)
