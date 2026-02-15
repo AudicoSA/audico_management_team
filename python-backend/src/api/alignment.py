@@ -34,86 +34,73 @@ class SupplierProduct(BaseModel):
 @router.get("/unmatched")
 async def get_unmatched_products(limit: int = 20):
     """
-    Get products from Supabase 'products' table that do NOT have an entry in 'product_matches'.
-    Deduplicates by SKU to prevent the same product appearing multiple times.
+    Get unmatched products, deduplicated by SKU.
+    Uses SQL RPC for reliable dedup (no row-limit issues).
+    Falls back to Python-side dedup if RPC not available.
     """
     sb = get_supabase_connector()
 
     try:
-        unmatched_data = []
-        seen_skus = set()  # Track SKUs we've already added to prevent loops
-        offset = 0
-        fetch_batch = 200
-        max_iterations = 10
+        # Try the SQL function first (fast, correct, no row-limit issues)
+        try:
+            result = sb.client.rpc("get_unmatched_products", {"p_limit": limit}).execute()
+            if result.data is not None:
+                return [
+                    {
+                        "id": p['id'],
+                        "sku": p['sku'],
+                        "name": p['product_name'],
+                        "description": p.get('description'),
+                        "price": p.get('selling_price', 0),
+                        "supplier": "Internal"
+                    }
+                    for p in result.data
+                ]
+        except Exception as rpc_err:
+            logger.warning("rpc_fallback", error=str(rpc_err))
 
-        while len(unmatched_data) < limit and offset < (fetch_batch * max_iterations):
-            # 1. Get a batch of products (most recent first)
+        # Fallback: Python-side dedup
+        # Step 1: Pre-build set of ALL matched SKUs
+        matched_skus = set()
+        page_offset = 0
+        while True:
+            matches_batch = sb.client.table("product_matches")\
+                .select("internal_product_id")\
+                .range(page_offset, page_offset + 999)\
+                .execute()
+            if not matches_batch.data:
+                break
+
+            batch_ids = [m['internal_product_id'] for m in matches_batch.data]
+            for i in range(0, len(batch_ids), 100):
+                chunk = batch_ids[i:i+100]
+                prods = sb.client.table("products").select("sku")\
+                    .in_("id", chunk).execute()
+                matched_skus.update(p['sku'] for p in prods.data if p.get('sku'))
+
+            if len(matches_batch.data) < 1000:
+                break
+            page_offset += 1000
+
+        # Step 2: Fetch products, filter by matched SKUs, dedup
+        unmatched_data = []
+        seen_skus = set()
+        offset = 0
+
+        while len(unmatched_data) < limit and offset < 2000:
             products_response = sb.client.table("products")\
                 .select("id, sku, product_name, description, selling_price")\
                 .gt("selling_price", 0)\
                 .order("created_at", desc=True)\
-                .range(offset, offset + fetch_batch - 1)\
+                .range(offset, offset + 199)\
                 .execute()
 
             if not products_response.data:
                 break
 
-            # 2. Get product IDs from this batch
-            product_ids = [p['id'] for p in products_response.data]
-
-            # 3. Check which are already matched
-            matched_ids = set()
-            for i in range(0, len(product_ids), 50):
-                chunk = product_ids[i:i+50]
-                matches_response = sb.client.table("product_matches")\
-                    .select("internal_product_id")\
-                    .in_("internal_product_id", chunk)\
-                    .execute()
-                matched_ids.update(m['internal_product_id'] for m in matches_response.data)
-
-            # 4. Also check if ANY duplicate of this SKU is already matched
-            # This prevents showing duplicates of already-linked products
-            batch_skus = list(set(p.get('sku', '') for p in products_response.data if p.get('sku')))
-            matched_skus = set()
-            for i in range(0, len(batch_skus), 50):
-                sku_chunk = batch_skus[i:i+50]
-                # Find all product IDs with these SKUs
-                sku_products = sb.client.table("products")\
-                    .select("id, sku")\
-                    .in_("sku", sku_chunk)\
-                    .execute()
-                sku_to_ids = {}
-                for sp in sku_products.data:
-                    sku_to_ids.setdefault(sp['sku'], []).append(sp['id'])
-
-                # Check if ANY id for each SKU is matched
-                all_ids_for_skus = [sp['id'] for sp in sku_products.data]
-                for j in range(0, len(all_ids_for_skus), 50):
-                    id_chunk = all_ids_for_skus[j:j+50]
-                    m_resp = sb.client.table("product_matches")\
-                        .select("internal_product_id")\
-                        .in_("internal_product_id", id_chunk)\
-                        .execute()
-                    for m in m_resp.data:
-                        # Find which SKU this matched ID belongs to
-                        for sku, ids in sku_to_ids.items():
-                            if m['internal_product_id'] in ids:
-                                matched_skus.add(sku)
-
-            # 5. Filter, deduplicate by SKU, and format results
             for p in products_response.data:
                 sku = p.get('sku', '')
-
-                # Skip if this specific ID is matched
-                if p['id'] in matched_ids:
-                    continue
-
-                # Skip if ANY duplicate of this SKU is already matched
-                if sku in matched_skus:
-                    continue
-
-                # Skip if we've already added this SKU (dedup within results)
-                if sku in seen_skus:
+                if not sku or sku in matched_skus or sku in seen_skus:
                     continue
 
                 seen_skus.add(sku)
@@ -129,7 +116,7 @@ async def get_unmatched_products(limit: int = 20):
                 if len(unmatched_data) >= limit:
                     break
 
-            offset += fetch_batch
+            offset += 200
 
         return unmatched_data
 
