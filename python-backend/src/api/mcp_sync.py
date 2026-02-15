@@ -27,6 +27,11 @@ async def trigger_mcp_sync():
             detail=f"Sync failed: {str(e)}"
         )
 
+@router.get("/sync-all")
+async def trigger_mcp_sync_get():
+    """Trigger sync for all MCP supplier feeds (GET wrapper for cron)."""
+    return await trigger_mcp_sync()
+
 @router.get("/suppliers")
 async def get_suppliers():
     """List all available MCP suppliers."""
