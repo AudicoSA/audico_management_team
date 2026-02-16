@@ -446,38 +446,95 @@ class OpenCartConnector:
                 connection.close()
 
     async def search_products_by_name(self, query: str) -> List[Dict]:
-        """Search products by name - flexible multi-token matching."""
+        """Search products by name - flexible multi-token matching with progressive relaxation."""
         connection = None
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
                 import re
-                # Extract significant words (len > 2, keep alphanumeric + numbers)
-                words = re.findall(r'\w+', query.lower())
-                sig_words = [w for w in words if len(w) > 2 or any(c.isdigit() for c in w)]
 
-                if not sig_words:
+                # Common stop words that hurt matching
+                stop_words = {
+                    'the', 'and', 'with', 'for', 'from', 'free', 'new', 'pro',
+                    'series', 'edition', 'version', 'model', 'type', 'style',
+                    'pair', 'set', 'kit', 'pack', 'bundle', 'combo', 'single',
+                    'matte', 'gloss', 'active', 'passive', 'powered', 'wireless',
+                    'wired', 'portable', 'indoor', 'outdoor', 'heritage',
+                    'inspired', 'premium', 'standard', 'basic', 'advanced',
+                }
+
+                # Extract all words
+                words = re.findall(r'\w+', query.lower())
+                all_sig_words = [w for w in words if len(w) > 2 or any(c.isdigit() for c in w)]
+
+                if not all_sig_words:
                     return []
 
-                # Search for products containing ALL significant words (AND logic)
-                conditions = [f"LOWER(pd.name) LIKE %s" for _ in sig_words]
-                params = [f"%{w}%" for w in sig_words]
-                where_clause = " AND ".join(conditions)
+                # Split into core words (brand/model) and descriptor words
+                core_words = [w for w in all_sig_words if w not in stop_words]
+                if not core_words:
+                    core_words = all_sig_words[:3]
 
-                sql = f"""
-                    SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
-                    FROM {self.prefix}product p
-                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
-                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                    WHERE {where_clause}
-                    AND pd.language_id = 1
-                    LIMIT 50
-                """
-                cursor.execute(sql, tuple(params))
-                results = cursor.fetchall()
+                results = []
+                seen_ids = set()
 
-                logger.info("search_products_by_name", query=query[:50], tokens=sig_words, results=len(results))
-                return results
+                def _run_search(word_list):
+                    """Execute AND search with given word list, return new results."""
+                    if not word_list:
+                        return []
+                    conditions = [f"LOWER(pd.name) LIKE %s" for _ in word_list]
+                    params = [f"%{w}%" for w in word_list]
+                    where_clause = " AND ".join(conditions)
+                    sql = f"""
+                        SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
+                        FROM {self.prefix}product p
+                        LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                        LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
+                        WHERE {where_clause}
+                        AND pd.language_id = 1
+                        LIMIT 50
+                    """
+                    cursor.execute(sql, tuple(params))
+                    return cursor.fetchall()
+
+                # Strategy 1: AND with all significant words (strictest)
+                results = _run_search(all_sig_words)
+                seen_ids = {r['product_id'] for r in results}
+
+                # Strategy 2: AND with core words only (no stop words)
+                if len(results) < 5 and core_words != all_sig_words:
+                    for r in _run_search(core_words):
+                        if r['product_id'] not in seen_ids:
+                            results.append(r)
+                            seen_ids.add(r['product_id'])
+
+                # Strategy 3: Progressive relaxation - drop words from end of core
+                if len(results) < 5 and len(core_words) > 2:
+                    for n in range(len(core_words) - 1, max(1, len(core_words) // 2) - 1, -1):
+                        subset = core_words[:n]
+                        for r in _run_search(subset):
+                            if r['product_id'] not in seen_ids:
+                                results.append(r)
+                                seen_ids.add(r['product_id'])
+                        if len(results) >= 10:
+                            break
+
+                # Strategy 4: Brand-only search (first core word, likely brand name)
+                if len(results) < 5 and core_words:
+                    brand = core_words[0]
+                    # Brand + any one other core word
+                    for extra_word in core_words[1:3]:
+                        for r in _run_search([brand, extra_word]):
+                            if r['product_id'] not in seen_ids:
+                                results.append(r)
+                                seen_ids.add(r['product_id'])
+                        if len(results) >= 20:
+                            break
+
+                logger.info("search_products_by_name", query=query[:50],
+                            core_words=core_words, total_words=len(all_sig_words),
+                            results=len(results))
+                return results[:50]
         except Exception as e:
             logger.error("search_products_failed", query=query[:50], error=str(e))
             return []
