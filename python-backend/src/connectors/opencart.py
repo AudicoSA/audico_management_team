@@ -446,7 +446,8 @@ class OpenCartConnector:
                 connection.close()
 
     async def search_products_by_name(self, query: str) -> List[Dict]:
-        """Search products by name - flexible multi-token matching with progressive relaxation."""
+        """Search products by name - flexible multi-token matching with progressive relaxation
+        and model number normalization (handles RP1400SW vs RP-1400SW)."""
         connection = None
         try:
             connection = self._get_connection()
@@ -461,6 +462,8 @@ class OpenCartConnector:
                     'matte', 'gloss', 'active', 'passive', 'powered', 'wireless',
                     'wired', 'portable', 'indoor', 'outdoor', 'heritage',
                     'inspired', 'premium', 'standard', 'basic', 'advanced',
+                    'eua', 'usa', 'black', 'white', 'silver', 'walnut', 'oak',
+                    'ebony', 'cherry', 'each', 'per',
                 }
 
                 # Extract all words
@@ -470,6 +473,12 @@ class OpenCartConnector:
                 if not all_sig_words:
                     return []
 
+                # Detect model numbers: words with both letters and digits (e.g. rp1400sw, ht50d)
+                def _is_model_number(w):
+                    return bool(re.search(r'[a-z]', w)) and bool(re.search(r'\d', w))
+
+                model_numbers = [w for w in all_sig_words if _is_model_number(w)]
+
                 # Split into core words (brand/model) and descriptor words
                 core_words = [w for w in all_sig_words if w not in stop_words]
                 if not core_words:
@@ -478,6 +487,13 @@ class OpenCartConnector:
                 results = []
                 seen_ids = set()
 
+                base_sql = f"""
+                    SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
+                    FROM {self.prefix}product p
+                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
+                """
+
                 def _run_search(word_list):
                     """Execute AND search with given word list, return new results."""
                     if not word_list:
@@ -485,55 +501,73 @@ class OpenCartConnector:
                     conditions = [f"LOWER(pd.name) LIKE %s" for _ in word_list]
                     params = [f"%{w}%" for w in word_list]
                     where_clause = " AND ".join(conditions)
-                    sql = f"""
-                        SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
-                        FROM {self.prefix}product p
-                        LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
-                        LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                        WHERE {where_clause}
-                        AND pd.language_id = 1
-                        LIMIT 50
-                    """
+                    sql = f"{base_sql} WHERE {where_clause} AND pd.language_id = 1 LIMIT 50"
                     cursor.execute(sql, tuple(params))
                     return cursor.fetchall()
 
-                # Strategy 1: AND with all significant words (strictest)
-                results = _run_search(all_sig_words)
-                seen_ids = {r['product_id'] for r in results}
+                def _run_normalized_search(word_list):
+                    """Search with dashes/hyphens stripped from both query and DB name.
+                    Handles model number mismatches like RP1400SW vs RP-1400SW."""
+                    if not word_list:
+                        return []
+                    conditions = [f"LOWER(REPLACE(pd.name, '-', '')) LIKE %s" for _ in word_list]
+                    # Strip dashes from search terms too
+                    params = [f"%{w.replace('-', '')}%" for w in word_list]
+                    where_clause = " AND ".join(conditions)
+                    sql = f"{base_sql} WHERE {where_clause} AND pd.language_id = 1 LIMIT 50"
+                    cursor.execute(sql, tuple(params))
+                    return cursor.fetchall()
 
-                # Strategy 2: AND with core words only (no stop words)
-                if len(results) < 5 and core_words != all_sig_words:
-                    for r in _run_search(core_words):
+                def _collect(new_results):
+                    """Add new results avoiding duplicates."""
+                    for r in new_results:
                         if r['product_id'] not in seen_ids:
                             results.append(r)
                             seen_ids.add(r['product_id'])
 
-                # Strategy 3: Progressive relaxation - drop words from end of core
-                if len(results) < 5 and len(core_words) > 2:
-                    for n in range(len(core_words) - 1, max(1, len(core_words) // 2) - 1, -1):
-                        subset = core_words[:n]
-                        for r in _run_search(subset):
-                            if r['product_id'] not in seen_ids:
-                                results.append(r)
-                                seen_ids.add(r['product_id'])
+                # Strategy 1: AND with all significant words (strictest)
+                _collect(_run_search(all_sig_words))
+
+                # Strategy 2: Same but with dash-normalized search (RP1400SW matches RP-1400SW)
+                if len(results) < 5:
+                    _collect(_run_normalized_search(all_sig_words))
+
+                # Strategy 3: AND with core words only (no stop words)
+                if len(results) < 5 and core_words != all_sig_words:
+                    _collect(_run_search(core_words))
+                    if len(results) < 5:
+                        _collect(_run_normalized_search(core_words))
+
+                # Strategy 4: Model number search - brand + model number only
+                # e.g. "Klipsch" + "RP1400SW" → matches "KLIPSCH RP-1400SW ..."
+                if len(results) < 5 and model_numbers and core_words:
+                    brand = core_words[0]
+                    for model in model_numbers:
+                        _collect(_run_normalized_search([brand, model]))
                         if len(results) >= 10:
                             break
 
-                # Strategy 4: Brand-only search (first core word, likely brand name)
-                if len(results) < 5 and core_words:
+                # Strategy 5: Progressive relaxation - drop words from end of core
+                if len(results) < 5 and len(core_words) > 2:
+                    for n in range(len(core_words) - 1, max(1, len(core_words) // 2) - 1, -1):
+                        subset = core_words[:n]
+                        _collect(_run_search(subset))
+                        if len(results) < 5:
+                            _collect(_run_normalized_search(subset))
+                        if len(results) >= 10:
+                            break
+
+                # Strategy 6: Brand + any one other core word
+                if len(results) < 5 and len(core_words) >= 2:
                     brand = core_words[0]
-                    # Brand + any one other core word
-                    for extra_word in core_words[1:3]:
-                        for r in _run_search([brand, extra_word]):
-                            if r['product_id'] not in seen_ids:
-                                results.append(r)
-                                seen_ids.add(r['product_id'])
+                    for extra_word in core_words[1:4]:
+                        _collect(_run_search([brand, extra_word]))
                         if len(results) >= 20:
                             break
 
                 logger.info("search_products_by_name", query=query[:50],
-                            core_words=core_words, total_words=len(all_sig_words),
-                            results=len(results))
+                            core_words=core_words, model_numbers=model_numbers,
+                            total_words=len(all_sig_words), results=len(results))
                 return results[:50]
         except Exception as e:
             logger.error("search_products_failed", query=query[:50], error=str(e))
