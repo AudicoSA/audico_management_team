@@ -279,17 +279,22 @@ async def trigger_auto_link(request: AutoLinkRequest):
     if _auto_link_status["running"]:
         return {"status": "already_running", "message": "Auto-link is already running in the background"}
 
-    async def _run():
+    def _run_sync():
+        """Run in a thread so synchronous DB calls don't block the event loop."""
+        import asyncio as _aio
         _auto_link_status["running"] = True
         try:
-            result = await auto_link_products(request)
+            loop = _aio.new_event_loop()
+            result = loop.run_until_complete(auto_link_products(request))
+            loop.close()
             _auto_link_status["last_result"] = result
         except Exception as e:
             _auto_link_status["last_result"] = {"status": "failed", "error": str(e)}
         finally:
             _auto_link_status["running"] = False
 
-    asyncio.create_task(_run())
+    import threading
+    threading.Thread(target=_run_sync, daemon=True).start()
     return {"status": "started", "message": "Auto-link started in background. Check GET /api/alignment/auto-link-status for progress."}
 
 @router.get("/auto-link-status")
@@ -380,7 +385,7 @@ async def auto_link_products(request: AutoLinkRequest):
             finally:
                 conn.close()
 
-        oc_products = await asyncio.to_thread(_load_oc_products)
+        oc_products = _load_oc_products()
 
         # Build lookup indexes: normalized SKU/Model -> product_id
         oc_by_sku = {}      # exact sku -> product_id
@@ -439,14 +444,12 @@ async def auto_link_products(request: AutoLinkRequest):
 
         logger.info("auto_link_pass1_done", matched=pass1_count, remaining=len(remaining_skus))
 
-        # Yield control so server stays responsive
-        await asyncio.sleep(0)
-
-        # ── Pass 2 (Deep): Alignment engine for remaining (batched) ──
+        # ── Pass 2 (Deep): Alignment engine for remaining (max 200 to avoid long runs) ──
         engine = AlignmentEngine()
-        batch_counter = 0
+        pass2_limit = min(len(remaining_skus), 200)
+        pass2_items = list(remaining_skus.items())[:pass2_limit]
 
-        for sku, products_list in remaining_skus.items():
+        for sku, products_list in pass2_items:
             rep = products_list[0]
             supplier_data = {
                 "sku": rep.get("sku"),
@@ -471,11 +474,6 @@ async def auto_link_products(request: AutoLinkRequest):
                         except Exception:
                             pass
                     pass2_count += 1
-
-            # Yield every 10 products so server stays responsive
-            batch_counter += 1
-            if batch_counter % 10 == 0:
-                await asyncio.sleep(0)
 
         message = f"Aligned {aligned_count} products ({pass1_count} by SKU, {pass2_count} by fuzzy match) from {processed_count} unique SKUs scanned."
         if request.dry_run:
