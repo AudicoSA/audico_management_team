@@ -442,29 +442,33 @@ class OrdersLogisticsAgent:
                         continue
 
                     status_name = STATUS_MAP.get(status_id, "Processing")
-                    
+
                     # 2. Upsert into Supabase
-                    # Calculate total cost (revenue)
                     total = float(order.get("total", 0))
-                    
-                    # Determine Paid status
-                    # Awaiting Payment (18) or Pending (1) usually means Unpaid
+
+                    # Determine Paid status from OpenCart
+                    # Awaiting Payment (18) or Pending (1) = Unpaid
                     is_paid = status_id not in [1, 18]
-                    
+
                     full_name = f"{order.get('firstname', '')} {order.get('lastname', '')}".strip()
                     if not full_name:
                         full_name = f"Order #{order_id}"
 
+                    # Check if this order was manually edited on dashboard
+                    # If so, don't overwrite order_paid or supplier_status
+                    existing = await self.supabase.get_order_tracker(order_id)
+                    manual_edit = existing and existing.get("last_modified_by") == "dashboard"
+
                     await self.supabase.upsert_order_tracker(
                         order_no=order_id,
-                        order_name=full_name, 
+                        order_name=full_name,
                         source="opencart",
-                        cost=total, # Revenue
-                        supplier_status=status_name, # Sync OpenCart status to Supplier Status field
-                        order_paid=is_paid,
-                        notes=order.get("products_summary") or "", # Strict: Only products or empty. No fallbacks.
-                        updates=f"Contact: {order.get('email')} | {order.get('telephone')}", # Move contact info here
-                        last_modified_by="system_sync"
+                        cost=total,
+                        supplier_status=status_name if not manual_edit else None,
+                        order_paid=is_paid if not manual_edit else None,
+                        notes=order.get("products_summary") or "",
+                        updates=f"Contact: {order.get('email')} | {order.get('telephone')}",
+                        last_modified_by="system_sync" if not manual_edit else None,
                     )
 
                     # --- NEW: Product Knowledge / Supplier Assignment ---

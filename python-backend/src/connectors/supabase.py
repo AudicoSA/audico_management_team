@@ -176,7 +176,7 @@ class SupabaseConnector:
         supplier_quote_no: Optional[str] = None,
         supplier_status: Optional[str] = None,
         source: str = "agent",
-        last_modified_by: str = "system",
+        last_modified_by: Optional[str] = "system",
         supplier_invoice_url: Optional[str] = None,
     ) -> None:
         """Insert or update order tracker record."""
@@ -185,7 +185,9 @@ class SupabaseConnector:
             existing = await self.get_order_tracker(order_no)
             current_data = existing if existing else {}
 
-            record = {"order_no": order_no, "source": source, "last_modified_by": last_modified_by}
+            record = {"order_no": order_no, "source": source}
+            if last_modified_by is not None:
+                record["last_modified_by"] = last_modified_by
 
             # Add non-None fields
             if order_name is not None:
