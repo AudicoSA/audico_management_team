@@ -366,6 +366,42 @@ async def create_product(request: CreateRequest):
             raise HTTPException(status_code=404, detail="Product not found")
 
         product = p_response.data[0]
+        sku = product.get("sku")
+
+        # --- DUPLICATE GUARD ---
+        # Check 1: Already in queue (pending/approved_pending)?
+        if sku:
+            existing_queue = sb.client.table("new_products_queue")\
+                .select("id, status")\
+                .eq("sku", sku)\
+                .in_("status", ["pending", "approved_pending"])\
+                .limit(1)\
+                .execute()
+            if existing_queue.data:
+                logger.info("product_already_in_queue", sku=sku, queue_id=existing_queue.data[0]['id'])
+                return {"status": "already_queued", "message": f"SKU {sku} is already in the creation queue"}
+
+        # Check 2: Already exists in OpenCart?
+        if sku:
+            from src.connectors.opencart import get_opencart_connector
+            oc = get_opencart_connector()
+            existing_oc = await oc.get_product_by_sku(sku)
+            if not existing_oc:
+                existing_oc = await oc.get_product_by_model(sku)
+            if existing_oc:
+                logger.info("product_already_in_opencart", sku=sku, product_id=existing_oc['product_id'])
+                return {"status": "already_exists", "message": f"SKU {sku} already exists in OpenCart (ID: {existing_oc['product_id']})"}
+
+        # Check 3: Already matched in product_matches?
+        existing_match = sb.client.table("product_matches")\
+            .select("id")\
+            .eq("internal_product_id", request.internal_product_id)\
+            .limit(1)\
+            .execute()
+        if existing_match.data:
+            logger.info("product_already_matched", internal_id=request.internal_product_id)
+            return {"status": "already_matched", "message": "This product is already matched or queued"}
+        # --- END DUPLICATE GUARD ---
 
         # 2. Prepare Queue Data
         supplier_name = "Internal-Alignment"
@@ -387,7 +423,7 @@ async def create_product(request: CreateRequest):
 
         queue_data = {
             "supplier_name": supplier_name,
-            "sku": product.get("sku"),
+            "sku": sku,
             "name": final_name,
             "cost_price": rounded_price,
             "selling_price": product.get("selling_price", 0),

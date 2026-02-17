@@ -631,11 +631,23 @@ class OpenCartConnector:
             if connection: connection.close()
 
     async def create_product(self, product_data: Dict[str, Any]) -> Optional[int]:
-        """Create a new product in OpenCart."""
+        """Create a new product in OpenCart (with pre-creation duplicate check)."""
         connection = None
         try:
             connection = self._get_connection()
             with connection.cursor() as cursor:
+                # Pre-creation safety: check if SKU already exists in OpenCart
+                sku = product_data.get('sku')
+                if sku:
+                    cursor.execute(
+                        f"SELECT product_id FROM {self.prefix}product WHERE sku = %s LIMIT 1",
+                        (sku,)
+                    )
+                    existing = cursor.fetchone()
+                    if existing:
+                        logger.info("create_product_skipped_duplicate", sku=sku, existing_id=existing['product_id'])
+                        return existing['product_id']
+
                 # 1. Insert into product table
                 sql_product = f"""
                     INSERT INTO {self.prefix}product 

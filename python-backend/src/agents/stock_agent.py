@@ -419,7 +419,7 @@ class StockListingsAgent:
             
             # Check if product already exists to prevent duplicates (Idempotency)
             # Use robust lookup (SKU, Model, Normalized Model)
-            existing_product = await self._find_existing_product(product['sku'])
+            existing_product = await self._find_existing_product(product['sku'], product.get('name'))
             if existing_product:
                 logger.info("product_already_exists_skipping_creation", sku=product['sku'])
                 product_id = existing_product['product_id']
@@ -538,8 +538,20 @@ class StockListingsAgent:
             return {"status": "failed", "error": str(e)}
 
     async def _queue_new_product(self, supplier_name: str, product: ProductData):
-        """Add new product to the review queue."""
+        """Add new product to the review queue (with duplicate guard)."""
         try:
+            # Duplicate guard: skip if SKU already queued (pending or approved_pending)
+            if product.sku:
+                existing = self.supabase.client.table("new_products_queue")\
+                    .select("id")\
+                    .eq("sku", product.sku)\
+                    .in_("status", ["pending", "approved_pending"])\
+                    .limit(1)\
+                    .execute()
+                if existing.data:
+                    logger.info("product_already_queued_skipping", sku=product.sku)
+                    return
+
             self.supabase.client.table("new_products_queue").insert({
                 "supplier_name": supplier_name,
                 "sku": product.sku,
@@ -671,34 +683,62 @@ Extract ALL products - do not skip any rows.
             "raw_data": product.dict()
         }, on_conflict="supplier_name,sku").execute()
     
-    async def _find_existing_product(self, sku: str) -> Optional[Dict]:
+    async def _find_existing_product(self, sku: str, name: str = None) -> Optional[Dict]:
         """
-        Find product by SKU or Model, handling common formatting differences.
+        Find product by SKU, Model, or Name, handling common formatting differences.
         """
-        # 1. Exact SKU match
-        product = await self.opencart.get_product_by_sku(sku)
-        if product:
-            return product
-            
-        # 2. Exact Model match
-        product = await self.opencart.get_product_by_model(sku)
-        if product:
-            return product
-            
-        # 3. Normalized Model match (try variations)
-        # e.g. "HTM6 S3" vs "HTM6-S3"
-        variations = [
-            sku.replace(" ", "-"),
-            sku.replace("-", " "),
-            sku.replace(" ", ""),
-            sku.replace("-", "")
-        ]
-        
-        for var in variations:
-            product = await self.opencart.get_product_by_model(var)
+        if not sku and not name:
+            return None
+
+        if sku:
+            # 1. Exact SKU match
+            product = await self.opencart.get_product_by_sku(sku)
             if product:
                 return product
-                
+
+            # 2. Exact Model match
+            product = await self.opencart.get_product_by_model(sku)
+            if product:
+                return product
+
+            # 3. Normalized variations (space/dash differences)
+            # e.g. "HTM6 S3" vs "HTM6-S3" vs "HTM6S3"
+            variations = set([
+                sku.replace(" ", "-"),
+                sku.replace("-", " "),
+                sku.replace(" ", ""),
+                sku.replace("-", ""),
+            ])
+
+            for var in variations:
+                if var == sku:
+                    continue
+                product = await self.opencart.get_product_by_model(var)
+                if product:
+                    return product
+                product = await self.opencart.get_product_by_sku(var)
+                if product:
+                    return product
+
+        # 4. Name-based search as fallback (catches products with different SKU formats)
+        if name and len(name) > 5:
+            from difflib import SequenceMatcher
+
+            results = await self.opencart.search_products_by_name(name)
+            if results:
+                normalized_name = self._normalize_string(name)
+                for r in results:
+                    r_name = self._normalize_string(r.get('name', ''))
+                    # Exact normalized name match
+                    if normalized_name and r_name and normalized_name == r_name:
+                        logger.info("existing_product_found_by_name", sku=sku, name=name, oc_id=r['product_id'])
+                        return r
+                    # Very high similarity (>90%)
+                    ratio = SequenceMatcher(None, normalized_name, r_name).ratio()
+                    if ratio > 0.90:
+                        logger.info("existing_product_found_by_name_fuzzy", sku=sku, name=name, oc_name=r.get('name'), similarity=round(ratio*100,1))
+                        return r
+
         return None
 
     async def _detect_changes(self, upload_id: str, supplier_name: str, product: ProductData, instruction: str, markup_pct: Optional[float] = None) -> int:
@@ -712,8 +752,8 @@ Extract ALL products - do not skip any rows.
         
         try:
             # 1. Try robust SKU/Model match first
-            oc_product = await self._find_existing_product(product.sku)
-            
+            oc_product = await self._find_existing_product(product.sku, product.name)
+
             # 2. If no match, try fuzzy name matching using search
             if not oc_product and product.name:
                 from difflib import SequenceMatcher
