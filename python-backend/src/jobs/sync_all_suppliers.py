@@ -232,6 +232,20 @@ class MCPSyncOrchestrator:
             
         return result
     
+    async def _run_auto_link(self) -> Dict:
+        """Run auto-link after supplier sync to link obvious matches."""
+        try:
+            from src.api.alignment import auto_link_products, AutoLinkRequest
+            logger.info("auto_link_post_sync_start")
+            result = await auto_link_products(AutoLinkRequest())
+            logger.info("auto_link_post_sync_complete",
+                       aligned=result.get("aligned", 0),
+                       processed=result.get("processed", 0))
+            return result
+        except Exception as e:
+            logger.error("auto_link_post_sync_failed", error=str(e))
+            return {"status": "failed", "error": str(e)}
+
     async def sync_all(self) -> Dict:
         """Sync all enabled MCP servers sequentially."""
         logger.info("sync_all_start", total_servers=len([s for s in MCP_SERVERS if s["enabled"]]))
@@ -287,17 +301,21 @@ class MCPSyncOrchestrator:
             .eq("id", self.session_id)\
             .execute()
         
-        logger.info("sync_all_complete", 
-                   completed=completed, 
-                   failed=failed, 
+        logger.info("sync_all_complete",
+                   completed=completed,
+                   failed=failed,
                    total=len(results))
-        
+
+        # Auto-link products after sync completes
+        auto_link_result = await self._run_auto_link()
+
         return {
             "session_id": self.session_id,
             "total": len(results),
             "completed": completed,
             "failed": failed,
-            "results": results
+            "results": results,
+            "auto_link": auto_link_result
         }
 
 async def run_sync():

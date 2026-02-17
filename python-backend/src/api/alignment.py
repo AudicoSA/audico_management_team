@@ -264,86 +264,185 @@ async def ignore_product(request: IgnoreRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 class AutoLinkRequest(BaseModel):
-    confidence_threshold: int = 100
-    batch_size: int = 50
+    confidence_threshold: int = 95
+    max_products: int = 5000
+    dry_run: bool = False
 
 @router.post("/auto-link")
 async def auto_link_products(request: AutoLinkRequest):
     """
-    Automatically link products that match with high confidence (default 100%).
-    Scans unmatched products and runs alignment engine.
+    Automatically link ALL unmatched products that match OpenCart with high confidence.
+
+    Two-pass approach for speed:
+      Pass 1 (Fast): Direct SKU-to-SKU/Model match against OpenCart DB — no alignment engine needed.
+      Pass 2 (Deep): Remaining unmatched go through full alignment engine for fuzzy/model matching.
+
+    Links ALL duplicate Supabase entries with the same SKU in one go.
     """
     sb = get_supabase_connector()
-    engine = AlignmentEngine()
-    
-    try:
-        # 1. Fetch unmatched products (reuse logic or fetch larger batch)
-        # We'll fetch a batch of recent unmatched products
-        # Logic similar to get_unmatched_products but we need just ID and details
-        
-        # Determine unmatched IDs first to be efficient
-        # Fetch 200 recent products
-        products_response = sb.client.table("products")\
-            .select("id, sku, product_name, selling_price")\
-            .gt("selling_price", 0)\
-            .order("created_at", desc=True)\
-            .limit(request.batch_size * 4)\
-            .execute() # Fetch 4x batch size to find enough unmatched
-            
-        if not products_response.data:
-            return {"status": "success", "aligned": 0, "processed": 0, "message": "No products found"}
+    from src.connectors.opencart import get_opencart_connector
+    import re
 
-        # Filter out already matched
-        product_ids = [p['id'] for p in products_response.data]
-        matches_response = sb.client.table("product_matches")\
-            .select("internal_product_id")\
-            .in_("internal_product_id", product_ids)\
-            .execute()
-            
-        matched_ids = set(m['internal_product_id'] for m in matches_response.data)
-        unmatched = [p for p in products_response.data if p['id'] not in matched_ids] # Limit to batch size not needed if we process all found
-        
+    try:
+        oc = get_opencart_connector()
+
+        # ── Step 1: Build set of already-matched internal IDs ──
+        matched_ids = set()
+        offset = 0
+        while True:
+            batch = sb.client.table("product_matches")\
+                .select("internal_product_id")\
+                .range(offset, offset + 999)\
+                .execute()
+            if not batch.data:
+                break
+            matched_ids.update(m['internal_product_id'] for m in batch.data)
+            if len(batch.data) < 1000:
+                break
+            offset += 1000
+
+        # ── Step 2: Fetch ALL unmatched products, dedup by SKU ──
+        unmatched_by_sku = {}  # sku -> [list of product rows]
+        offset = 0
+        while len(unmatched_by_sku) < request.max_products:
+            products = sb.client.table("products")\
+                .select("id, sku, product_name, selling_price")\
+                .gt("selling_price", 0)\
+                .range(offset, offset + 499)\
+                .execute()
+            if not products.data:
+                break
+            for p in products.data:
+                if p['id'] in matched_ids:
+                    continue
+                sku = p.get('sku')
+                if not sku:
+                    continue
+                if sku not in unmatched_by_sku:
+                    unmatched_by_sku[sku] = []
+                unmatched_by_sku[sku].append(p)
+            if len(products.data) < 500:
+                break
+            offset += 500
+
+        if not unmatched_by_sku:
+            return {"status": "success", "aligned": 0, "processed": 0,
+                    "message": "No unmatched products found"}
+
         aligned_count = 0
         processed_count = 0
-        
-        for p in unmatched[:request.batch_size]: # Respect batch limit
+        skipped_dry_run = 0
+        pass1_count = 0
+        pass2_count = 0
+
+        def _normalize(s):
+            if not s:
+                return ""
+            return re.sub(r'[^a-z0-9]', '', s.lower())
+
+        # ── Pass 1 (Fast): Direct SKU/Model lookup in OpenCart ──
+        remaining_skus = {}
+        for sku, products_list in unmatched_by_sku.items():
             processed_count += 1
-            
-            # Run Alignment
+            sku_norm = _normalize(sku)
+            if not sku_norm:
+                remaining_skus[sku] = products_list
+                continue
+
+            # Try exact SKU match
+            oc_product = await oc.get_product_by_sku(sku)
+            if not oc_product:
+                oc_product = await oc.get_product_by_model(sku)
+            # Try normalized variations
+            if not oc_product:
+                for var in [sku.replace("-", ""), sku.replace(" ", ""), sku.replace("-", " "), sku.replace(" ", "-")]:
+                    if var == sku:
+                        continue
+                    oc_product = await oc.get_product_by_sku(var)
+                    if not oc_product:
+                        oc_product = await oc.get_product_by_model(var)
+                    if oc_product:
+                        break
+
+            if oc_product:
+                if request.dry_run:
+                    skipped_dry_run += len(products_list)
+                    logger.info("auto_link_dry_run", sku=sku, oc_id=oc_product['product_id'])
+                else:
+                    # Link ALL Supabase entries with this SKU
+                    for p in products_list:
+                        try:
+                            sb.client.table("product_matches").insert({
+                                "internal_product_id": p['id'],
+                                "opencart_product_id": oc_product['product_id'],
+                                "match_type": "auto_sku",
+                                "score": 100
+                            }).execute()
+                            aligned_count += 1
+                        except Exception:
+                            pass  # Duplicate constraint, skip
+                    pass1_count += 1
+                    logger.info("auto_linked_sku", sku=sku, oc_id=oc_product['product_id'], entries=len(products_list))
+            else:
+                remaining_skus[sku] = products_list
+
+        # ── Pass 2 (Deep): Alignment engine for remaining products ──
+        engine = AlignmentEngine()
+        for sku, products_list in remaining_skus.items():
+            # Use first product as representative for this SKU
+            rep = products_list[0]
             supplier_data = {
-                "sku": p.get("sku"),
-                "name": p.get("product_name"),
-                "price": p.get("selling_price")
+                "sku": rep.get("sku"),
+                "name": rep.get("product_name"),
+                "price": rep.get("selling_price")
             }
-            
+
             candidates = await engine.find_matches(supplier_data)
-            
-            # Check for high confidence match
+
             if candidates and candidates[0]['confidence'] >= request.confidence_threshold:
-                best_match = candidates[0]
-                
-                # Link it
-                link_data = {
-                    "internal_product_id": p['id'],
-                    "opencart_product_id": best_match['product']['product_id'],
-                    "match_type": best_match['match_type'], # e.g. "exact_sku"
-                    "score": best_match['confidence']
-                }
-                
-                sb.client.table("product_matches").insert(link_data).execute()
-                aligned_count += 1
-                logger.info("auto_aligned", product=p['product_name'], match=best_match['product']['name'])
-        
+                best = candidates[0]
+
+                if request.dry_run:
+                    skipped_dry_run += len(products_list)
+                    logger.info("auto_link_dry_run_fuzzy", sku=sku, match=best['product'].get('name'), score=best['confidence'])
+                else:
+                    for p in products_list:
+                        try:
+                            sb.client.table("product_matches").insert({
+                                "internal_product_id": p['id'],
+                                "opencart_product_id": best['product']['product_id'],
+                                "match_type": best['match_type'],
+                                "score": best['confidence']
+                            }).execute()
+                            aligned_count += 1
+                        except Exception:
+                            pass
+                    pass2_count += 1
+                    logger.info("auto_linked_fuzzy", sku=sku, oc_name=best['product'].get('name'), score=best['confidence'])
+
+        message = f"Aligned {aligned_count} products ({pass1_count} by SKU, {pass2_count} by fuzzy match) from {processed_count} unique SKUs scanned."
+        if request.dry_run:
+            message = f"[DRY RUN] Would align {skipped_dry_run} products from {processed_count} unique SKUs."
+
+        logger.info("auto_link_complete", aligned=aligned_count, pass1=pass1_count, pass2=pass2_count, processed=processed_count)
+
         return {
             "status": "success",
             "aligned": aligned_count,
             "processed": processed_count,
-            "message": f"Successfully aligned {aligned_count} products out of {processed_count} scanned."
+            "pass1_sku_matches": pass1_count,
+            "pass2_fuzzy_matches": pass2_count,
+            "message": message
         }
 
     except Exception as e:
         logger.error("auto_link_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/auto-link")
+async def auto_link_products_get():
+    """Auto-link products (GET wrapper for cron jobs)."""
+    return await auto_link_products(AutoLinkRequest())
 
 class CreateRequest(BaseModel):
     internal_product_id: str
