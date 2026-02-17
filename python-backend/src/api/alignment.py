@@ -370,16 +370,16 @@ async def auto_link_products(request: AutoLinkRequest):
             return {"status": "success", "aligned": 0, "processed": 0,
                     "message": "No unmatched products found"}
 
-        # ── Step 3 (BULK): Load ALL OpenCart products in ONE query ──
+        # ── Step 3 (BULK): Load ALL OpenCart products in ONE query (with names) ──
         def _load_oc_products():
             conn = oc._get_connection()
             try:
                 with conn.cursor() as cursor:
                     cursor.execute(f"""
-                        SELECT p.product_id, p.sku, p.model
+                        SELECT p.product_id, p.sku, p.model, pd.name
                         FROM {oc.prefix}product p
-                        WHERE (p.sku IS NOT NULL AND p.sku != '')
-                           OR (p.model IS NOT NULL AND p.model != '')
+                        LEFT JOIN {oc.prefix}product_description pd ON (p.product_id = pd.product_id AND pd.language_id = 1)
+                        WHERE p.status = 1
                     """)
                     return cursor.fetchall()
             finally:
@@ -391,6 +391,7 @@ async def auto_link_products(request: AutoLinkRequest):
         oc_by_sku = {}      # exact sku -> product_id
         oc_by_model = {}    # exact model -> product_id
         oc_by_norm = {}     # normalized (stripped) -> product_id
+        oc_by_name = {}     # normalized name -> product_id
 
         for p in oc_products:
             pid = p['product_id']
@@ -400,13 +401,19 @@ async def auto_link_products(request: AutoLinkRequest):
             if p.get('model'):
                 oc_by_model[p['model']] = pid
                 oc_by_norm[_normalize(p['model'])] = pid
+            if p.get('name'):
+                name_norm = _normalize(p['name'])
+                if name_norm and len(name_norm) >= 6:
+                    oc_by_name[name_norm] = pid
 
-        logger.info("auto_link_oc_index_built", oc_products=len(oc_products), unique_norms=len(oc_by_norm))
+        logger.info("auto_link_oc_index_built", oc_products=len(oc_products),
+                     unique_norms=len(oc_by_norm), unique_names=len(oc_by_name))
 
-        # ── Pass 1 (Fast): Match in Python using indexes ──
+        # ── Pass 1 (Fast): Match by SKU/model in Python using indexes ──
         aligned_count = 0
         processed_count = 0
         pass1_count = 0
+        pass1b_count = 0
         pass2_count = 0
         remaining_skus = {}
 
@@ -444,12 +451,45 @@ async def auto_link_products(request: AutoLinkRequest):
 
         logger.info("auto_link_pass1_done", matched=pass1_count, remaining=len(remaining_skus))
 
-        # ── Pass 2 (Deep): Alignment engine for remaining (max 200 to avoid long runs) ──
-        engine = AlignmentEngine()
-        pass2_limit = min(len(remaining_skus), 200)
-        pass2_items = list(remaining_skus.items())[:pass2_limit]
+        # ── Pass 1b (Fast): Bulk name matching in Python ──
+        # Match by normalized product name — catches 100% name matches instantly
+        still_remaining = {}
+        for sku, products_list in remaining_skus.items():
+            rep = products_list[0]
+            product_name = rep.get("product_name", "")
+            if not product_name:
+                still_remaining[sku] = products_list
+                continue
 
-        for sku, products_list in pass2_items:
+            name_norm = _normalize(product_name)
+            oc_pid = oc_by_name.get(name_norm) if name_norm and len(name_norm) >= 6 else None
+
+            if oc_pid:
+                if not request.dry_run:
+                    for p in products_list:
+                        try:
+                            sb.client.table("product_matches").insert({
+                                "internal_product_id": p['id'],
+                                "opencart_product_id": oc_pid,
+                                "match_type": "auto_name",
+                                "score": 100
+                            }).execute()
+                            aligned_count += 1
+                        except Exception:
+                            pass
+                    pass1b_count += 1
+                else:
+                    pass1b_count += 1
+            else:
+                still_remaining[sku] = products_list
+
+        logger.info("auto_link_pass1b_done", matched=pass1b_count, remaining=len(still_remaining))
+
+        # ── Pass 2 (Deep): Alignment engine for ALL remaining (no cap) ──
+        engine = AlignmentEngine()
+        pass2_items = list(still_remaining.items())
+
+        for i, (sku, products_list) in enumerate(pass2_items):
             rep = products_list[0]
             supplier_data = {
                 "sku": rep.get("sku"),
@@ -457,35 +497,47 @@ async def auto_link_products(request: AutoLinkRequest):
                 "price": rep.get("selling_price")
             }
 
-            candidates = await engine.find_matches(supplier_data)
+            try:
+                candidates = await engine.find_matches(supplier_data)
 
-            if candidates and candidates[0]['confidence'] >= request.confidence_threshold:
-                best = candidates[0]
-                if not request.dry_run:
-                    for p in products_list:
-                        try:
-                            sb.client.table("product_matches").insert({
-                                "internal_product_id": p['id'],
-                                "opencart_product_id": best['product']['product_id'],
-                                "match_type": best['match_type'],
-                                "score": best['confidence']
-                            }).execute()
-                            aligned_count += 1
-                        except Exception:
-                            pass
-                    pass2_count += 1
+                if candidates and candidates[0]['confidence'] >= request.confidence_threshold:
+                    best = candidates[0]
+                    if not request.dry_run:
+                        for p in products_list:
+                            try:
+                                sb.client.table("product_matches").insert({
+                                    "internal_product_id": p['id'],
+                                    "opencart_product_id": best['product']['product_id'],
+                                    "match_type": best['match_type'],
+                                    "score": best['confidence']
+                                }).execute()
+                                aligned_count += 1
+                            except Exception:
+                                pass
+                        pass2_count += 1
+            except Exception as e:
+                logger.warning("auto_link_pass2_item_failed", sku=sku, error=str(e))
 
-        message = f"Aligned {aligned_count} products ({pass1_count} by SKU, {pass2_count} by fuzzy match) from {processed_count} unique SKUs scanned."
+            # Log progress every 500 products
+            if (i + 1) % 500 == 0:
+                logger.info("auto_link_pass2_progress", processed=i+1, total=len(pass2_items), matched=pass2_count)
+
+        message = (f"Aligned {aligned_count} products "
+                   f"({pass1_count} by SKU, {pass1b_count} by name, {pass2_count} by fuzzy) "
+                   f"from {processed_count} unique SKUs scanned.")
         if request.dry_run:
-            message = f"[DRY RUN] Would align {pass1_count} by SKU, {pass2_count} by fuzzy from {processed_count} unique SKUs."
+            message = (f"[DRY RUN] Would align {pass1_count} by SKU, {pass1b_count} by name, "
+                       f"{pass2_count} by fuzzy from {processed_count} unique SKUs.")
 
-        logger.info("auto_link_complete", aligned=aligned_count, pass1=pass1_count, pass2=pass2_count, processed=processed_count)
+        logger.info("auto_link_complete", aligned=aligned_count, pass1=pass1_count,
+                     pass1b=pass1b_count, pass2=pass2_count, processed=processed_count)
 
         return {
             "status": "success",
             "aligned": aligned_count,
             "processed": processed_count,
             "pass1_sku_matches": pass1_count,
+            "pass1b_name_matches": pass1b_count,
             "pass2_fuzzy_matches": pass2_count,
             "message": message
         }
