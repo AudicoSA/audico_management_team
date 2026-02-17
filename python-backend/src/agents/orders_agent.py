@@ -374,47 +374,73 @@ class OrdersLogisticsAgent:
     async def sync_orders(self) -> Dict[str, Any]:
         """
         Sync recent orders from OpenCart to Supabase.
-        Only syncs orders with valid statuses (excludes unconfirmed, cancelled, etc.)
+        Syncs valid orders and marks cancelled/refunded orders so dashboard can hide them.
         """
         logger.info("sync_orders_started")
         try:
-            # Valid OpenCart status IDs to sync
-            # 1 = Pending, 2 = Processing, 3 = Shipped, 5 = Complete
-            # 15 = Processed (Awaiting Shipment), 18 = Awaiting Payment, 23 = Paid, 29 = Supplier Ordered
+            # Valid OpenCart status IDs to sync into dashboard
             VALID_STATUSES = [1, 2, 3, 5, 15, 18, 23, 29]
-            
+
+            # Cancelled/dead statuses — if order already in Supabase, mark as Cancelled
+            CANCELLED_STATUSES = [7, 8, 9, 10, 11, 14, 16, 17]
+            # 7=Canceled, 8=Denied, 9=Cancelled Reversal, 10=Failed,
+            # 11=Refunded, 14=Expired, 16=Voided, 17=Chargeback
+
             STATUS_MAP = {
                 1: "Pending",
                 2: "Processing",
                 3: "Shipped",
                 5: "Complete",
+                7: "Cancelled",
+                8: "Cancelled",
+                9: "Cancelled",
+                10: "Cancelled",
+                11: "Refunded",
+                14: "Cancelled",
                 15: "Processed",
-                17: "Cancelled", 
+                16: "Cancelled",
+                17: "Cancelled",
                 18: "Awaiting Payment",
                 23: "Paid",
                 29: "Supplier Ordered"
             }
-            
+
             # 1. Fetch recent orders
             orders = await self.opencart.get_recent_orders(limit=50)
-            
+
             synced_count = 0
             skipped_count = 0
+            cancelled_count = 0
             errors = 0
-            
+
             for order in orders:
                 try:
                     order_id = str(order["order_id"])
                     status_id = int(order.get("order_status_id", 0))
-                    
-                    # Skip orders with invalid statuses
-                    # Status 0 = Unconfirmed, 7 = Canceled, etc.
-                    # Note: We specifically filter out Cancelled/Missing here so they don't clutter DB
+
+                    # Handle cancelled/dead orders: update Supabase if they exist
+                    if status_id in CANCELLED_STATUSES:
+                        existing = await self.supabase.get_order_tracker(order_id)
+                        if existing and existing.get("supplier_status") != "Cancelled":
+                            status_label = STATUS_MAP.get(status_id, "Cancelled")
+                            await self.supabase.upsert_order_tracker(
+                                order_no=order_id,
+                                supplier_status=status_label,
+                                order_paid=False,
+                                last_modified_by="system_sync"
+                            )
+                            logger.info("order_marked_cancelled", order_id=order_id, status_id=status_id)
+                            cancelled_count += 1
+                        else:
+                            skipped_count += 1
+                        continue
+
+                    # Skip truly invalid statuses (0=Unconfirmed, etc.)
                     if status_id not in VALID_STATUSES:
                         logger.debug("sync_order_skipped", order_id=order_id, status_id=status_id, reason="invalid_status")
                         skipped_count += 1
                         continue
-                    
+
                     status_name = STATUS_MAP.get(status_id, "Processing")
                     
                     # 2. Upsert into Supabase
@@ -565,8 +591,8 @@ class OrdersLogisticsAgent:
                     logger.error("sync_order_failed", order_id=order.get("order_id"), error=str(e))
                     errors += 1
             
-            logger.info("sync_orders_completed", synced=synced_count, skipped=skipped_count, errors=errors)
-            return {"status": "success", "synced": synced_count, "skipped": skipped_count, "errors": errors}
+            logger.info("sync_orders_completed", synced=synced_count, skipped=skipped_count, cancelled=cancelled_count, errors=errors)
+            return {"status": "success", "synced": synced_count, "skipped": skipped_count, "cancelled": cancelled_count, "errors": errors}
             
         except Exception as e:
             logger.error("sync_orders_failed", error=str(e))

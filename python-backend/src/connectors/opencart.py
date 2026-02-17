@@ -112,12 +112,12 @@ class OpenCartConnector:
             if connection:
                 connection.close()
 
-    async def get_recent_orders(self, days_back: int = 30, limit: int = 50) -> list[Dict[str, Any]]:
+    async def get_recent_orders(self, days_back: int = 30, limit: int = 100) -> list[Dict[str, Any]]:
         """Fetch recent orders from OpenCart DB.
 
         Args:
             days_back: Number of days back to fetch (default: 30)
-            limit: Maximum number of orders to return (default: 50)
+            limit: Maximum number of orders to return (default: 100)
 
         Returns:
             List of order dictionaries
@@ -127,10 +127,10 @@ class OpenCartConnector:
             connection = self._get_connection()
             with connection.cursor() as cursor:
                 sql = f"""
-                    SELECT 
+                    SELECT
                         o.order_id, o.firstname, o.lastname, o.email, o.telephone,
                         o.order_status_id, os.name as status_name, o.total, o.date_added,
-                        o.shipping_address_1, o.shipping_address_2, o.shipping_city, 
+                        o.shipping_address_1, o.shipping_address_2, o.shipping_city,
                         o.shipping_postcode, o.shipping_zone, o.shipping_country,
                         (
                             SELECT GROUP_CONCAT(CONCAT(op.quantity, 'x ', op.name) SEPARATOR ', ')
@@ -139,13 +139,15 @@ class OpenCartConnector:
                         ) as products_summary
                     FROM {self.prefix}order o
                     LEFT JOIN {self.prefix}order_status os ON (o.order_status_id = os.order_status_id AND os.language_id = 1)
+                    WHERE o.order_status_id > 0
+                      AND o.date_added >= DATE_SUB(NOW(), INTERVAL %s DAY)
                     ORDER BY o.date_added DESC
                     LIMIT %s
                 """
-                cursor.execute(sql, (limit,))
+                cursor.execute(sql, (days_back, limit))
                 orders = cursor.fetchall()
-                
-                logger.info("recent_orders_fetched_from_db", count=len(orders))
+
+                logger.info("recent_orders_fetched_from_db", count=len(orders), days_back=days_back)
                 return orders
 
         except Exception as e:
