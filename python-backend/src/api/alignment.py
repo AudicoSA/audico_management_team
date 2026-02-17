@@ -268,7 +268,38 @@ class AutoLinkRequest(BaseModel):
     max_products: int = 5000
     dry_run: bool = False
 
+# Background auto-link state
+_auto_link_status = {"running": False, "last_result": None}
+
 @router.post("/auto-link")
+async def trigger_auto_link(request: AutoLinkRequest):
+    """Trigger auto-link in the background. Returns immediately."""
+    import asyncio
+
+    if _auto_link_status["running"]:
+        return {"status": "already_running", "message": "Auto-link is already running in the background"}
+
+    async def _run():
+        _auto_link_status["running"] = True
+        try:
+            result = await auto_link_products(request)
+            _auto_link_status["last_result"] = result
+        except Exception as e:
+            _auto_link_status["last_result"] = {"status": "failed", "error": str(e)}
+        finally:
+            _auto_link_status["running"] = False
+
+    asyncio.create_task(_run())
+    return {"status": "started", "message": "Auto-link started in background. Check GET /api/alignment/auto-link-status for progress."}
+
+@router.get("/auto-link-status")
+async def get_auto_link_status():
+    """Check status of background auto-link."""
+    return {
+        "running": _auto_link_status["running"],
+        "last_result": _auto_link_status["last_result"]
+    }
+
 async def auto_link_products(request: AutoLinkRequest):
     """
     Automatically link ALL unmatched products that match OpenCart with high confidence.
@@ -441,8 +472,8 @@ async def auto_link_products(request: AutoLinkRequest):
 
 @router.get("/auto-link")
 async def auto_link_products_get():
-    """Auto-link products (GET wrapper for cron jobs)."""
-    return await auto_link_products(AutoLinkRequest())
+    """Auto-link products (GET wrapper for cron jobs). Runs in background."""
+    return await trigger_auto_link(AutoLinkRequest())
 
 class CreateRequest(BaseModel):
     internal_product_id: str
