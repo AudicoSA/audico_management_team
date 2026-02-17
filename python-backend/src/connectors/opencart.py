@@ -421,6 +421,7 @@ class OpenCartConnector:
         except Exception as e:
             logger.error("get_manufacturer_products_failed", id=manufacturer_id, error=str(e))
             return []
+        finally:
             if connection:
                 connection.close()
 
@@ -465,7 +466,10 @@ class OpenCartConnector:
                     'wired', 'portable', 'indoor', 'outdoor', 'heritage',
                     'inspired', 'premium', 'standard', 'basic', 'advanced',
                     'eua', 'usa', 'black', 'white', 'silver', 'walnut', 'oak',
-                    'ebony', 'cherry', 'each', 'per',
+                    'ebony', 'cherry', 'each', 'per', 'channel', 'zone',
+                    'way', 'system', 'monitor', 'speaker', 'amplifier', 'receiver',
+                    'player', 'cable', 'adapter', 'mount', 'stand', 'bracket',
+                    'inch', 'mm', 'cm', 'watts', 'watt', 'ohm', 'ohms',
                 }
 
                 # Extract all words
@@ -693,6 +697,153 @@ class OpenCartConnector:
             if connection:
                 connection.rollback()
             return None
+        finally:
+            if connection:
+                connection.close()
+
+    async def search_products_by_sku(self, sku: str) -> List[Dict]:
+        """Search products by SKU or model field (exact and normalized matching).
+
+        Checks both sku and model columns, stripping non-alphanumeric chars
+        so that 'RP-1400SW' matches 'RP1400SW'.
+        """
+        import re
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                # Normalize: strip everything except alphanumerics
+                sku_norm = re.sub(r'[^a-z0-9]', '', sku.lower())
+                if not sku_norm or len(sku_norm) < 2:
+                    return []
+
+                base_sql = f"""
+                    SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer
+                    FROM {self.prefix}product p
+                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
+                """
+
+                results = []
+                seen_ids = set()
+
+                def _collect(rows):
+                    for r in rows:
+                        if r['product_id'] not in seen_ids:
+                            results.append(r)
+                            seen_ids.add(r['product_id'])
+
+                # 1. Exact match on sku or model field
+                sql1 = f"{base_sql} WHERE (p.sku = %s OR p.model = %s) AND pd.language_id = 1 LIMIT 10"
+                cursor.execute(sql1, (sku, sku))
+                _collect(cursor.fetchall())
+
+                # 2. Normalized match (strip non-alphanum from both sides)
+                if len(results) < 5:
+                    sql2 = f"""{base_sql}
+                        WHERE (
+                            LOWER(REPLACE(REPLACE(REPLACE(p.sku, '-', ''), ' ', ''), '.', '')) = %s
+                            OR LOWER(REPLACE(REPLACE(REPLACE(p.model, '-', ''), ' ', ''), '.', '')) = %s
+                        ) AND pd.language_id = 1 LIMIT 10"""
+                    cursor.execute(sql2, (sku_norm, sku_norm))
+                    _collect(cursor.fetchall())
+
+                # 3. LIKE match — SKU appears as substring in sku/model/name
+                if len(results) < 5 and len(sku_norm) >= 4:
+                    sql3 = f"""{base_sql}
+                        WHERE (
+                            LOWER(REPLACE(p.sku, '-', '')) LIKE %s
+                            OR LOWER(REPLACE(p.model, '-', '')) LIKE %s
+                            OR LOWER(REPLACE(pd.name, '-', '')) LIKE %s
+                        ) AND pd.language_id = 1 LIMIT 20"""
+                    like_param = f"%{sku_norm}%"
+                    cursor.execute(sql3, (like_param, like_param, like_param))
+                    _collect(cursor.fetchall())
+
+                logger.info("search_products_by_sku", sku=sku, results=len(results))
+                return results
+
+        except Exception as e:
+            logger.error("search_products_by_sku_error", sku=sku, error=str(e))
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    async def search_products_by_name_or(self, query: str, min_word_matches: int = 2) -> List[Dict]:
+        """Search products where ANY min_word_matches significant words match (OR-based).
+
+        This is a fallback when AND-based search returns too few results.
+        Finds products that share at least `min_word_matches` words with the query.
+        """
+        import re
+        connection = None
+        try:
+            connection = self._get_connection()
+            with connection.cursor() as cursor:
+                stop_words = {
+                    'the', 'and', 'with', 'for', 'from', 'free', 'new', 'pro',
+                    'series', 'edition', 'version', 'model', 'type', 'style',
+                    'pair', 'set', 'kit', 'pack', 'bundle', 'combo', 'single',
+                    'matte', 'gloss', 'active', 'passive', 'powered', 'wireless',
+                    'wired', 'portable', 'indoor', 'outdoor', 'heritage',
+                    'inspired', 'premium', 'standard', 'basic', 'advanced',
+                    'eua', 'usa', 'black', 'white', 'silver', 'walnut', 'oak',
+                    'ebony', 'cherry', 'each', 'per', 'channel', 'zone',
+                    'way', 'system', 'monitor', 'speaker', 'amplifier', 'receiver',
+                    'player', 'cable', 'adapter', 'mount', 'stand', 'bracket',
+                    'inch', 'mm', 'cm', 'watts', 'watt', 'ohm', 'ohms',
+                }
+
+                words = re.findall(r'\w+', query.lower())
+                sig_words = [w for w in words if (len(w) > 2 or any(c.isdigit() for c in w)) and w not in stop_words]
+
+                if len(sig_words) < 2:
+                    return []
+
+                # Build OR conditions for each significant word
+                # Then use HAVING to require at least min_word_matches
+                conditions = []
+                params = []
+                for w in sig_words[:8]:  # Cap at 8 words to keep query sane
+                    conditions.append(f"(LOWER(REPLACE(pd.name, '-', '')) LIKE %s)")
+                    params.append(f"%{w.replace('-', '')}%")
+
+                # Count how many words match using CASE expressions
+                case_exprs = []
+                case_params = []
+                for w in sig_words[:8]:
+                    case_exprs.append(f"CASE WHEN LOWER(REPLACE(pd.name, '-', '')) LIKE %s THEN 1 ELSE 0 END")
+                    case_params.append(f"%{w.replace('-', '')}%")
+
+                match_count_expr = " + ".join(case_exprs)
+
+                sql = f"""
+                    SELECT p.product_id, p.model, p.sku, p.quantity, p.price, pd.name, m.name as manufacturer,
+                           ({match_count_expr}) as word_matches
+                    FROM {self.prefix}product p
+                    LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
+                    LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
+                    WHERE ({" OR ".join(conditions)}) AND pd.language_id = 1
+                    HAVING word_matches >= %s
+                    ORDER BY word_matches DESC
+                    LIMIT 30
+                """
+                all_params = case_params + params + [min_word_matches]
+                cursor.execute(sql, tuple(all_params))
+                results = cursor.fetchall()
+
+                # Remove the word_matches helper column from results
+                for r in results:
+                    r.pop('word_matches', None)
+
+                logger.info("search_products_by_name_or", query=query[:50],
+                            sig_words=sig_words[:8], results=len(results))
+                return results
+
+        except Exception as e:
+            logger.error("search_products_by_name_or_error", query=query[:50], error=str(e))
+            return []
         finally:
             if connection:
                 connection.close()
