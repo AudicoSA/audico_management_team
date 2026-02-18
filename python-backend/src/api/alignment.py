@@ -485,38 +485,137 @@ async def auto_link_products(request: AutoLinkRequest):
 
         logger.info("auto_link_pass1b_done", matched=pass1b_count, remaining=len(still_remaining))
 
-        # ── Pass 2 (Deep): Alignment engine for ALL remaining (no cap) ──
-        engine = AlignmentEngine()
-        pass2_items = list(still_remaining.items())
+        # ── Pass 2 (Bulk in-memory fuzzy): No MySQL queries ──
+        # Build inverted word index from OpenCart product names for fast candidate lookup
+        try:
+            from thefuzz import fuzz as _fuzz
+        except ImportError:
+            _fuzz = None
 
+        def _token_set_ratio(s1, s2):
+            if _fuzz:
+                return _fuzz.token_set_ratio(s1, s2)
+            # Fallback: Jaccard similarity on word sets
+            set1 = set(s1.lower().split())
+            set2 = set(s2.lower().split())
+            if not set1 or not set2:
+                return 0
+            return int(len(set1 & set2) / len(set1 | set2) * 100)
+
+        stop_words = {
+            'the', 'and', 'with', 'for', 'from', 'free', 'new', 'pro',
+            'series', 'edition', 'version', 'model', 'type', 'style',
+            'pair', 'set', 'kit', 'pack', 'bundle', 'combo', 'single',
+            'matte', 'gloss', 'active', 'passive', 'powered', 'wireless',
+            'wired', 'portable', 'indoor', 'outdoor', 'heritage',
+            'inspired', 'premium', 'standard', 'basic', 'advanced',
+            'eua', 'usa', 'black', 'white', 'silver', 'walnut', 'oak',
+            'ebony', 'cherry', 'each', 'per', 'channel', 'zone',
+            'way', 'system', 'monitor', 'speaker', 'amplifier', 'receiver',
+            'player', 'cable', 'adapter', 'mount', 'stand', 'bracket',
+            'inch', 'mm', 'cm', 'watts', 'watt', 'ohm', 'ohms',
+        }
+
+        def _extract_words(name):
+            words = re.findall(r'\w+', name.lower())
+            return [w for w in words if (len(w) > 2 or any(c.isdigit() for c in w)) and w not in stop_words]
+
+        # Build inverted index: word -> set of OpenCart product indexes
+        oc_list = []  # list of (product_id, name, sku_norm, model_norm)
+        word_index = {}  # word -> set of indexes into oc_list
+
+        for p in oc_products:
+            name = p.get('name', '') or ''
+            if not name:
+                continue
+            idx = len(oc_list)
+            p_sku_norm = _normalize(p.get('sku', '') or '')
+            p_model_norm = _normalize(p.get('model', '') or '')
+            oc_list.append((p['product_id'], name, p_sku_norm, p_model_norm))
+            for w in _extract_words(name):
+                if w not in word_index:
+                    word_index[w] = set()
+                word_index[w].add(idx)
+
+        logger.info("auto_link_pass2_index_built", oc_indexed=len(oc_list), unique_words=len(word_index))
+
+        pass2_items = list(still_remaining.items())
         for i, (sku, products_list) in enumerate(pass2_items):
             rep = products_list[0]
-            supplier_data = {
-                "sku": rep.get("sku"),
-                "name": rep.get("product_name"),
-                "price": rep.get("selling_price")
-            }
+            s_name = rep.get("product_name", "")
+            s_sku = rep.get("sku", "")
+            s_sku_norm = _normalize(s_sku)
 
-            try:
-                candidates = await engine.find_matches(supplier_data)
+            if not s_name:
+                continue
 
-                if candidates and candidates[0]['confidence'] >= request.confidence_threshold:
-                    best = candidates[0]
-                    if not request.dry_run:
-                        for p in products_list:
-                            try:
-                                sb.client.table("product_matches").insert({
-                                    "internal_product_id": p['id'],
-                                    "opencart_product_id": best['product']['product_id'],
-                                    "match_type": best['match_type'],
-                                    "score": best['confidence']
-                                }).execute()
-                                aligned_count += 1
-                            except Exception:
-                                pass
-                        pass2_count += 1
-            except Exception as e:
-                logger.warning("auto_link_pass2_item_failed", sku=sku, error=str(e))
+            s_words = _extract_words(s_name)
+            if not s_words:
+                continue
+
+            # Find candidate OpenCart products that share at least 1 word
+            candidate_counts = {}  # oc_list index -> count of shared words
+            for w in s_words:
+                for idx in word_index.get(w, []):
+                    candidate_counts[idx] = candidate_counts.get(idx, 0) + 1
+
+            # Only consider candidates sharing at least 2 words (or 1 if few words)
+            min_shared = 2 if len(s_words) >= 2 else 1
+            candidates = [idx for idx, cnt in candidate_counts.items() if cnt >= min_shared]
+
+            if not candidates:
+                continue
+
+            # Score top candidates (limit to 50 to keep it fast)
+            candidates.sort(key=lambda idx: candidate_counts[idx], reverse=True)
+            candidates = candidates[:50]
+
+            best_score = 0
+            best_pid = None
+            best_type = "fuzzy"
+            s_name_norm = _normalize(s_name)
+
+            for idx in candidates:
+                oc_pid, oc_name, oc_sku_norm, oc_model_norm = oc_list[idx]
+                score = 0
+                match_type = "fuzzy"
+
+                # SKU match bonus
+                if s_sku_norm and len(s_sku_norm) >= 4:
+                    if s_sku_norm == oc_sku_norm or s_sku_norm == oc_model_norm:
+                        score = 100
+                        match_type = "exact_sku"
+                    elif s_sku_norm in _normalize(oc_name):
+                        score = 90
+                        match_type = "sku_in_name"
+
+                # Fuzzy name match
+                if score < 90:
+                    name_score = _token_set_ratio(s_name, oc_name)
+                    norm_score = _token_set_ratio(s_name_norm, _normalize(oc_name))
+                    score = max(score, name_score, norm_score)
+
+                if score > best_score:
+                    best_score = score
+                    best_pid = oc_pid
+                    best_type = match_type
+
+            if best_score >= request.confidence_threshold and best_pid:
+                if not request.dry_run:
+                    for p in products_list:
+                        try:
+                            sb.client.table("product_matches").insert({
+                                "internal_product_id": p['id'],
+                                "opencart_product_id": best_pid,
+                                "match_type": best_type,
+                                "score": best_score
+                            }).execute()
+                            aligned_count += 1
+                        except Exception:
+                            pass
+                    pass2_count += 1
+                else:
+                    pass2_count += 1
 
             # Log progress every 500 products
             if (i + 1) % 500 == 0:
