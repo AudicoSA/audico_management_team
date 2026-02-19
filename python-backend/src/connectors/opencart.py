@@ -507,7 +507,7 @@ class OpenCartConnector:
                     conditions = [f"LOWER(pd.name) LIKE %s" for _ in word_list]
                     params = [f"%{w}%" for w in word_list]
                     where_clause = " AND ".join(conditions)
-                    sql = f"{base_sql} WHERE {where_clause} AND pd.language_id = 1 LIMIT 50"
+                    sql = f"{base_sql} WHERE p.status = 1 AND {where_clause} AND pd.language_id = 1 LIMIT 50"
                     cursor.execute(sql, tuple(params))
                     return cursor.fetchall()
 
@@ -520,7 +520,7 @@ class OpenCartConnector:
                     # Strip dashes from search terms too
                     params = [f"%{w.replace('-', '')}%" for w in word_list]
                     where_clause = " AND ".join(conditions)
-                    sql = f"{base_sql} WHERE {where_clause} AND pd.language_id = 1 LIMIT 50"
+                    sql = f"{base_sql} WHERE p.status = 1 AND {where_clause} AND pd.language_id = 1 LIMIT 50"
                     cursor.execute(sql, tuple(params))
                     return cursor.fetchall()
 
@@ -733,15 +733,15 @@ class OpenCartConnector:
                             results.append(r)
                             seen_ids.add(r['product_id'])
 
-                # 1. Exact match on sku or model field
-                sql1 = f"{base_sql} WHERE (p.sku = %s OR p.model = %s) AND pd.language_id = 1 LIMIT 10"
+                # 1. Exact match on sku or model field (active products only)
+                sql1 = f"{base_sql} WHERE p.status = 1 AND (p.sku = %s OR p.model = %s) AND pd.language_id = 1 LIMIT 10"
                 cursor.execute(sql1, (sku, sku))
                 _collect(cursor.fetchall())
 
                 # 2. Normalized match (strip non-alphanum from both sides)
                 if len(results) < 5:
                     sql2 = f"""{base_sql}
-                        WHERE (
+                        WHERE p.status = 1 AND (
                             LOWER(REPLACE(REPLACE(REPLACE(p.sku, '-', ''), ' ', ''), '.', '')) = %s
                             OR LOWER(REPLACE(REPLACE(REPLACE(p.model, '-', ''), ' ', ''), '.', '')) = %s
                         ) AND pd.language_id = 1 LIMIT 10"""
@@ -751,7 +751,7 @@ class OpenCartConnector:
                 # 3. LIKE match — SKU appears as substring in sku/model/name
                 if len(results) < 5 and len(sku_norm) >= 4:
                     sql3 = f"""{base_sql}
-                        WHERE (
+                        WHERE p.status = 1 AND (
                             LOWER(REPLACE(p.sku, '-', '')) LIKE %s
                             OR LOWER(REPLACE(p.model, '-', '')) LIKE %s
                             OR LOWER(REPLACE(pd.name, '-', '')) LIKE %s
@@ -824,7 +824,7 @@ class OpenCartConnector:
                     FROM {self.prefix}product p
                     LEFT JOIN {self.prefix}product_description pd ON (p.product_id = pd.product_id)
                     LEFT JOIN {self.prefix}manufacturer m ON (p.manufacturer_id = m.manufacturer_id)
-                    WHERE ({" OR ".join(conditions)}) AND pd.language_id = 1
+                    WHERE p.status = 1 AND ({" OR ".join(conditions)}) AND pd.language_id = 1
                     HAVING word_matches >= %s
                     ORDER BY word_matches DESC
                     LIMIT 30
