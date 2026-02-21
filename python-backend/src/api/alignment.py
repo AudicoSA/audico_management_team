@@ -1112,87 +1112,288 @@ async def link_product_manual(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/clear-unmatched")
-async def clear_unmatched_queue(batch_limit: int = 1000):
+@router.post("/bulk-align")
+async def bulk_align_products(background_tasks: BackgroundTasks):
     """
-    Bulk ignore unmatched products by marking them as 'ignored'.
-    Processes products in batches to avoid timeout.
+    Bulk auto-alignment: Match ALL Supabase products to OpenCart products by SKU.
 
-    Query params:
-    - batch_limit: Maximum number of products to process (default 1000, max 5000)
+    Strategy:
+    1. Load ALL OpenCart SKUs into memory (one SQL query)
+    2. Load ALL Supabase products (paginated)
+    3. Match by SKU/model in Python (instant)
+    4. Create/update product_matches entries
+    5. Products with no OpenCart match remain unmatched (for manual review)
+
+    Runs as a background task to avoid timeout.
     """
-    sb = get_supabase_connector()
+    background_tasks.add_task(_run_bulk_alignment)
+    return {
+        "status": "started",
+        "message": "Bulk alignment started in background. Check /api/alignment/bulk-align-status for progress."
+    }
+
+
+# Global status for bulk alignment
+_bulk_align_status = {"status": "idle", "progress": {}}
+
+
+@router.get("/bulk-align-status")
+async def get_bulk_align_status():
+    """Get the current status of the bulk alignment process."""
+    return _bulk_align_status
+
+
+def _run_bulk_alignment():
+    """Background task: bulk align all Supabase products to OpenCart by SKU."""
+    import re
+    import threading
+    global _bulk_align_status
+
+    _bulk_align_status = {"status": "running", "progress": {"step": "starting"}}
 
     try:
-        # Limit to prevent abuse
-        batch_limit = min(batch_limit, 5000)
-        logger.info("clear_unmatched_started", batch_limit=batch_limit)
+        sb = get_supabase_connector()
+        from src.connectors.opencart import OpenCartConnector
+        oc = OpenCartConnector()
 
-        # Fetch a batch of products (any products, not just recent)
-        # We fetch 2x batch_limit to account for already-matched ones
-        products_response = sb.client.table("products")\
-            .select("id")\
-            .gt("selling_price", 0)\
-            .limit(batch_limit * 2)\
-            .execute()
+        # =============================================
+        # STEP 1: Load ALL OpenCart products into memory
+        # =============================================
+        _bulk_align_status["progress"]["step"] = "loading_opencart_products"
+        logger.info("bulk_align_step1", step="Loading OpenCart products")
 
-        if not products_response.data:
-            return {
-                "status": "success",
-                "ignored": 0,
-                "message": "No products found to ignore"
-            }
+        conn = oc._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    SELECT p.product_id, p.sku, p.model, p.quantity, p.price,
+                           pd.name, m.name as manufacturer
+                    FROM {oc.prefix}product p
+                    LEFT JOIN {oc.prefix}product_description pd
+                        ON p.product_id = pd.product_id AND pd.language_id = 1
+                    LEFT JOIN {oc.prefix}manufacturer m
+                        ON p.manufacturer_id = m.manufacturer_id
+                    WHERE p.status = 1
+                """)
+                oc_products = cursor.fetchall()
+        finally:
+            conn.close()
 
-        # Get all product IDs
-        all_product_ids = [p['id'] for p in products_response.data]
+        # Build lookup maps for OpenCart products
+        # Map by: sku (exact), model (exact), and normalized name tokens
+        oc_by_sku = {}
+        oc_by_model = {}
 
-        # Check which are already matched (in chunks for efficiency)
-        matched_ids = set()
-        for i in range(0, len(all_product_ids), 100):
-            chunk = all_product_ids[i:i+100]
-            matches_response = sb.client.table("product_matches")\
-                .select("internal_product_id")\
-                .in_("internal_product_id", chunk)\
+        for ocp in oc_products:
+            sku = (ocp.get('sku') or '').strip().lower()
+            model = (ocp.get('model') or '').strip().lower()
+
+            if sku:
+                oc_by_sku[sku] = ocp
+            if model:
+                oc_by_model[model] = ocp
+
+        _bulk_align_status["progress"]["opencart_products"] = len(oc_products)
+        logger.info("bulk_align_opencart_loaded", count=len(oc_products),
+                    unique_skus=len(oc_by_sku), unique_models=len(oc_by_model))
+
+        # =============================================
+        # STEP 2: Load ALL Supabase products (paginated)
+        # =============================================
+        _bulk_align_status["progress"]["step"] = "loading_supabase_products"
+        logger.info("bulk_align_step2", step="Loading Supabase products")
+
+        all_sb_products = []
+        offset = 0
+        page_size = 1000
+
+        while True:
+            response = sb.client.table("products")\
+                .select("id, sku, supplier_sku, product_name")\
+                .gt("selling_price", 0)\
+                .range(offset, offset + page_size - 1)\
                 .execute()
-            matched_ids.update(m['internal_product_id'] for m in matches_response.data)
 
-        # Get truly unmatched IDs
-        unmatched_ids = [pid for pid in all_product_ids if pid not in matched_ids][:batch_limit]
+            if not response.data:
+                break
 
-        if not unmatched_ids:
-            return {
-                "status": "success",
-                "ignored": 0,
-                "message": "No unmatched products found"
+            all_sb_products.extend(response.data)
+            offset += page_size
+
+            if len(response.data) < page_size:
+                break
+
+        _bulk_align_status["progress"]["supabase_products"] = len(all_sb_products)
+        logger.info("bulk_align_supabase_loaded", count=len(all_sb_products))
+
+        # =============================================
+        # STEP 3: Load existing matches to avoid duplicates
+        # =============================================
+        _bulk_align_status["progress"]["step"] = "loading_existing_matches"
+
+        existing_matches = {}
+        match_offset = 0
+
+        while True:
+            m_response = sb.client.table("product_matches")\
+                .select("internal_product_id, opencart_product_id, match_type")\
+                .range(match_offset, match_offset + page_size - 1)\
+                .execute()
+
+            if not m_response.data:
+                break
+
+            for m in m_response.data:
+                existing_matches[m['internal_product_id']] = m
+
+            match_offset += page_size
+
+            if len(m_response.data) < page_size:
+                break
+
+        _bulk_align_status["progress"]["existing_matches"] = len(existing_matches)
+        logger.info("bulk_align_existing_matches", count=len(existing_matches))
+
+        # =============================================
+        # STEP 4: Match products by SKU
+        # =============================================
+        _bulk_align_status["progress"]["step"] = "matching_products"
+
+        new_links = []       # Products matched to OpenCart
+        upgraded_links = []  # "ignored" entries that should become real links
+
+        for sb_prod in all_sb_products:
+            sb_id = sb_prod['id']
+            sb_sku = (sb_prod.get('sku') or '').strip().lower()
+            sb_supplier_sku = (sb_prod.get('supplier_sku') or '').strip().lower()
+
+            # Try to find OpenCart match by multiple strategies
+            oc_match = None
+            match_type = None
+
+            # Strategy 1: Exact SKU match
+            if sb_sku and sb_sku in oc_by_sku:
+                oc_match = oc_by_sku[sb_sku]
+                match_type = "exact_sku"
+
+            # Strategy 2: Exact model match
+            if not oc_match and sb_sku and sb_sku in oc_by_model:
+                oc_match = oc_by_model[sb_sku]
+                match_type = "exact_model"
+
+            # Strategy 3: Supplier SKU match
+            if not oc_match and sb_supplier_sku:
+                if sb_supplier_sku in oc_by_sku:
+                    oc_match = oc_by_sku[sb_supplier_sku]
+                    match_type = "supplier_sku"
+                elif sb_supplier_sku in oc_by_model:
+                    oc_match = oc_by_model[sb_supplier_sku]
+                    match_type = "supplier_model"
+
+            # Strategy 4: Normalized SKU (remove dashes, spaces)
+            if not oc_match and sb_sku:
+                normalized = re.sub(r'[\s\-_.:]+', '', sb_sku)
+                for oc_sku_key, oc_prod in oc_by_sku.items():
+                    if re.sub(r'[\s\-_.:]+', '', oc_sku_key) == normalized:
+                        oc_match = oc_prod
+                        match_type = "normalized_sku"
+                        break
+                if not oc_match:
+                    for oc_model_key, oc_prod in oc_by_model.items():
+                        if re.sub(r'[\s\-_.:]+', '', oc_model_key) == normalized:
+                            oc_match = oc_prod
+                            match_type = "normalized_model"
+                            break
+
+            if not oc_match:
+                continue  # No match found - skip
+
+            oc_product_id = oc_match['product_id']
+
+            # Check existing match status
+            existing = existing_matches.get(sb_id)
+
+            if existing:
+                if existing.get('opencart_product_id') == oc_product_id:
+                    continue  # Already correctly linked
+
+                if existing.get('match_type') == 'ignored' or existing.get('opencart_product_id') is None:
+                    # Currently ignored - upgrade to real link
+                    upgraded_links.append({
+                        "internal_product_id": sb_id,
+                        "opencart_product_id": oc_product_id,
+                        "match_type": f"auto_{match_type}",
+                        "score": 100
+                    })
+                # If already linked to a DIFFERENT opencart product, don't override
+            else:
+                # New link
+                new_links.append({
+                    "internal_product_id": sb_id,
+                    "opencart_product_id": oc_product_id,
+                    "match_type": f"auto_{match_type}",
+                    "score": 100
+                })
+
+        _bulk_align_status["progress"]["new_links"] = len(new_links)
+        _bulk_align_status["progress"]["upgraded_links"] = len(upgraded_links)
+        logger.info("bulk_align_matches_found", new=len(new_links), upgraded=len(upgraded_links))
+
+        # =============================================
+        # STEP 5: Write matches to database
+        # =============================================
+        _bulk_align_status["progress"]["step"] = "writing_matches"
+
+        # Insert new links in batches
+        inserted = 0
+        for i in range(0, len(new_links), 100):
+            batch = new_links[i:i+100]
+            try:
+                sb.client.table("product_matches").insert(batch).execute()
+                inserted += len(batch)
+            except Exception as e:
+                logger.error("bulk_insert_batch_failed", batch_start=i, error=str(e))
+
+        # Update upgraded links (delete old ignored, insert new link)
+        upgraded = 0
+        for link in upgraded_links:
+            try:
+                # Delete the old ignored entry
+                sb.client.table("product_matches")\
+                    .delete()\
+                    .eq("internal_product_id", link["internal_product_id"])\
+                    .is_("opencart_product_id", "null")\
+                    .execute()
+
+                # Insert the proper link
+                sb.client.table("product_matches").insert(link).execute()
+                upgraded += 1
+            except Exception as e:
+                logger.error("bulk_upgrade_failed",
+                           internal_id=link["internal_product_id"], error=str(e))
+
+        # =============================================
+        # DONE
+        # =============================================
+        result = {
+            "status": "completed",
+            "progress": {
+                "opencart_products": len(oc_products),
+                "supabase_products": len(all_sb_products),
+                "existing_matches": len(existing_matches),
+                "new_links_created": inserted,
+                "ignored_upgraded_to_links": upgraded,
+                "total_linked": inserted + upgraded
             }
-
-        # Create ignore records
-        ignore_records = [
-            {
-                "internal_product_id": pid,
-                "opencart_product_id": None,
-                "match_type": "ignored",
-                "score": 0
-            }
-            for pid in unmatched_ids
-        ]
-
-        # Insert in batches of 100
-        inserted_count = 0
-        for i in range(0, len(ignore_records), 100):
-            batch = ignore_records[i:i+100]
-            sb.client.table("product_matches").insert(batch).execute()
-            inserted_count += len(batch)
-
-        logger.info("clear_unmatched_completed", ignored=inserted_count)
-
-        return {
-            "status": "success",
-            "ignored": inserted_count,
-            "total_remaining": f"Call again if more products need clearing",
-            "message": f"Successfully ignored {inserted_count} unmatched products"
         }
 
+        _bulk_align_status = result
+        logger.info("bulk_align_completed", **result["progress"])
+
     except Exception as e:
-        logger.error("clear_unmatched_failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        _bulk_align_status = {
+            "status": "failed",
+            "error": str(e),
+            "progress": _bulk_align_status.get("progress", {})
+        }
+        logger.error("bulk_align_failed", error=str(e))
