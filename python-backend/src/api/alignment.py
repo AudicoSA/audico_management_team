@@ -1259,8 +1259,8 @@ def _run_bulk_alignment():
         # =============================================
         _bulk_align_status["progress"]["step"] = "matching_products"
 
-        new_links = []       # Products matched to OpenCart
-        upgraded_links = []  # "ignored" entries that should become real links
+        new_links = []       # Products with no match entry at all
+        skipped_ignored = 0  # Products user manually ignored - never override
 
         for sb_prod in all_sb_products:
             sb_id = sb_prod['id']
@@ -1314,20 +1314,14 @@ def _run_bulk_alignment():
             existing = existing_matches.get(sb_id)
 
             if existing:
-                if existing.get('opencart_product_id') == oc_product_id:
-                    continue  # Already correctly linked
-
-                if existing.get('match_type') == 'ignored' or existing.get('opencart_product_id') is None:
-                    # Currently ignored - upgrade to real link
-                    upgraded_links.append({
-                        "internal_product_id": sb_id,
-                        "opencart_product_id": oc_product_id,
-                        "match_type": f"auto_{match_type}",
-                        "score": 100
-                    })
-                # If already linked to a DIFFERENT opencart product, don't override
+                # Already has a match entry - respect it completely
+                # "ignored" = user deliberately excluded this product
+                # Any other match = already linked
+                if existing.get('match_type') == 'ignored':
+                    skipped_ignored += 1
+                continue
             else:
-                # New link
+                # No match entry at all - create new auto-link
                 new_links.append({
                     "internal_product_id": sb_id,
                     "opencart_product_id": oc_product_id,
@@ -1336,8 +1330,8 @@ def _run_bulk_alignment():
                 })
 
         _bulk_align_status["progress"]["new_links"] = len(new_links)
-        _bulk_align_status["progress"]["upgraded_links"] = len(upgraded_links)
-        logger.info("bulk_align_matches_found", new=len(new_links), upgraded=len(upgraded_links))
+        _bulk_align_status["progress"]["skipped_ignored"] = skipped_ignored
+        logger.info("bulk_align_matches_found", new=len(new_links), skipped_ignored=skipped_ignored)
 
         # =============================================
         # STEP 5: Write matches to database
@@ -1354,24 +1348,6 @@ def _run_bulk_alignment():
             except Exception as e:
                 logger.error("bulk_insert_batch_failed", batch_start=i, error=str(e))
 
-        # Update upgraded links (delete old ignored, insert new link)
-        upgraded = 0
-        for link in upgraded_links:
-            try:
-                # Delete the old ignored entry
-                sb.client.table("product_matches")\
-                    .delete()\
-                    .eq("internal_product_id", link["internal_product_id"])\
-                    .is_("opencart_product_id", "null")\
-                    .execute()
-
-                # Insert the proper link
-                sb.client.table("product_matches").insert(link).execute()
-                upgraded += 1
-            except Exception as e:
-                logger.error("bulk_upgrade_failed",
-                           internal_id=link["internal_product_id"], error=str(e))
-
         # =============================================
         # DONE
         # =============================================
@@ -1382,8 +1358,8 @@ def _run_bulk_alignment():
                 "supabase_products": len(all_sb_products),
                 "existing_matches": len(existing_matches),
                 "new_links_created": inserted,
-                "ignored_upgraded_to_links": upgraded,
-                "total_linked": inserted + upgraded
+                "skipped_ignored": skipped_ignored,
+                "total_linked": inserted
             }
         }
 
