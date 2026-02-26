@@ -104,9 +104,13 @@ export async function POST(request: NextRequest) {
 
                 console.log(`[TenderProcess] Extracted ${pdfText.length} characters from PDF.`);
 
-                if (!pdfText.trim()) {
+                // pdf2json adds page breaks like "----------------Page (0) Break----------------"
+                // We need to clean these out to check if there is any ACTUAL text.
+                const cleanText = pdfText.replace(/----------------Page \(\d+\) Break----------------/g, "").replace(/\r\n/g, "").trim();
+
+                if (cleanText.length < 5) {
                     return NextResponse.json(
-                        { error: "No readable text found in PDF. If this is a scanned document, please convert it to an image." },
+                        { error: "No readable text found in this PDF. It appears to be a scanned document or image-only PDF. Please convert it to an image (PNG/JPG) and upload it so our Vision AI can process it." },
                         { status: 400 }
                     );
                 }
