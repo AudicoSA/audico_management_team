@@ -52,6 +52,8 @@ If text is unclear or handwritten, make your best interpretation.`;
 
 export const dynamic = "force-dynamic";
 
+import PDFParser from "pdf2json";
+
 // ... existing code ...
 
 export async function POST(request: NextRequest) {
@@ -84,14 +86,21 @@ export async function POST(request: NextRequest) {
             console.log(`[TenderProcess] Step 1: PDF text extraction...`);
 
             try {
-                // Convert File to Buffer for pdf-parse
-                const arrayBuffer = await file.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
+                // Parse PDF text using pdf2json to avoid DOMMatrix/pdf.js environment errors in Next.js
+                const pdfParser = new PDFParser(null, true); // true = text mode
 
-                // Parse PDF text dynamically to avoid Next.js import warnings
-                const pdfParseFunc = require("pdf-parse");
-                const pdfData = await pdfParseFunc(buffer);
-                const pdfText = pdfData.text;
+                const pdfText = await new Promise<string>((resolve, reject) => {
+                    pdfParser.on("pdfParser_dataError", (errData: any) => reject(new Error(errData.parserError)));
+                    pdfParser.on("pdfParser_dataReady", (pdfData: any) => {
+                        // pdf2json returns raw text in text mode
+                        resolve(pdfParser.getRawTextContent());
+                    });
+
+                    // Convert File to Buffer
+                    file.arrayBuffer().then(buffer => {
+                        pdfParser.parseBuffer(Buffer.from(buffer));
+                    }).catch(reject);
+                });
 
                 console.log(`[TenderProcess] Extracted ${pdfText.length} characters from PDF.`);
 
