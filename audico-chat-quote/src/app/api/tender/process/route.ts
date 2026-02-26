@@ -121,6 +121,7 @@ export async function POST(request: NextRequest) {
                             content: `${EXTRACTION_PROMPT}\n\nHere is the text extracted from the document:\n\n${pdfText}`,
                         },
                     ],
+                    response_format: { type: "json_object" },
                 });
 
                 content = textResponse.choices[0]?.message?.content || "";
@@ -163,6 +164,7 @@ export async function POST(request: NextRequest) {
                         ],
                     },
                 ],
+                response_format: { type: "json_object" },
             });
 
             content = visionResponse.choices[0]?.message?.content || "";
@@ -184,14 +186,21 @@ export async function POST(request: NextRequest) {
         // Parse JSON from response
         let extractedData: { items: ExtractedItem[]; notes?: string };
         try {
-            let jsonStr = content;
-            if (content.includes("```json")) {
-                jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "");
-            } else if (content.includes("```")) {
-                jsonStr = content.replace(/```\n?/g, "");
+            let jsonStr = content.trim();
+            // Try to extract from markdown code block if present
+            const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (match) {
+                jsonStr = match[1].trim();
+            } else {
+                // Fallback: extract substring between first { and last }
+                const firstBrace = jsonStr.indexOf('{');
+                const lastBrace = jsonStr.lastIndexOf('}');
+                if (firstBrace !== -1 && lastBrace !== -1) {
+                    jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+                }
             }
 
-            extractedData = JSON.parse(jsonStr.trim());
+            extractedData = JSON.parse(jsonStr);
         } catch (parseError) {
             console.error("[TenderProcess] Failed to parse JSON:", content);
             return NextResponse.json(
