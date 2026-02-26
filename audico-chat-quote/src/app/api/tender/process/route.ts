@@ -52,14 +52,17 @@ If text is unclear or handwritten, make your best interpretation.`;
 
 export const dynamic = "force-dynamic";
 
+// ... existing code ...
+
 export async function POST(request: NextRequest) {
     try {
-        const body = await request.json();
-        const { image, sessionId } = body;
+        const formData = await request.formData();
+        const file = formData.get("file") as File | null;
+        const sessionId = formData.get("sessionId") as string | null;
 
-        if (!image) {
+        if (!file) {
             return NextResponse.json(
-                { error: "No image provided" },
+                { error: "No file provided" },
                 { status: 400 }
             );
         }
@@ -72,37 +75,99 @@ export async function POST(request: NextRequest) {
         }
 
         console.log(`[TenderProcess] Starting pipeline for session: ${sessionId}`);
+        console.log(`[TenderProcess] Received file: ${file.name} (${file.type})`);
 
-        // Step 1: Extract products from image using Vision AI
-        console.log(`[TenderProcess] Step 1: Vision extraction...`);
+        let content = "";
 
-        const imageContent: OpenAI.Chat.Completions.ChatCompletionContentPartImage = {
-            type: "image_url",
-            image_url: {
-                url: image,
-                detail: "high",
-            },
-        };
+        // Handle PDF files
+        if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+            console.log(`[TenderProcess] Step 1: PDF text extraction...`);
 
-        const visionResponse = await getOpenAI().chat.completions.create({
-            model: "gpt-4o",
-            max_tokens: 4000,
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "text", text: EXTRACTION_PROMPT },
-                        imageContent,
+            try {
+                // Convert File to Buffer for pdf-parse
+                const arrayBuffer = await file.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+
+                // Parse PDF text dynamically to avoid Next.js import warnings
+                const pdfParseFunc = require("pdf-parse");
+                const pdfData = await pdfParseFunc(buffer);
+                const pdfText = pdfData.text;
+
+                console.log(`[TenderProcess] Extracted ${pdfText.length} characters from PDF.`);
+
+                if (!pdfText.trim()) {
+                    return NextResponse.json(
+                        { error: "No readable text found in PDF. If this is a scanned document, please convert it to an image." },
+                        { status: 400 }
+                    );
+                }
+
+                // Send text to standard GPT-4o for extraction
+                const textResponse = await getOpenAI().chat.completions.create({
+                    model: "gpt-4o",
+                    max_tokens: 4000,
+                    messages: [
+                        {
+                            role: "user",
+                            content: `${EXTRACTION_PROMPT}\n\nHere is the text extracted from the document:\n\n${pdfText}`,
+                        },
                     ],
-                },
-            ],
-        });
+                });
 
-        const content = visionResponse.choices[0]?.message?.content;
+                content = textResponse.choices[0]?.message?.content || "";
+
+            } catch (pdfError: any) {
+                console.error("[TenderProcess] PDF Parsing error:", pdfError);
+                return NextResponse.json(
+                    { error: `Failed to parse PDF document: ${pdfError.message}` },
+                    { status: 500 }
+                );
+            }
+        }
+        // Handle Image files
+        else if (file.type.startsWith("image/")) {
+            console.log(`[TenderProcess] Step 1: Vision extraction...`);
+
+            // Convert file to base64 Data URL
+            const arrayBuffer = await file.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const base64Data = buffer.toString('base64');
+            const dataUrl = `data:${file.type};base64,${base64Data}`;
+
+            const imageContent: OpenAI.Chat.Completions.ChatCompletionContentPartImage = {
+                type: "image_url",
+                image_url: {
+                    url: dataUrl,
+                    detail: "high",
+                },
+            };
+
+            const visionResponse = await getOpenAI().chat.completions.create({
+                model: "gpt-4o",
+                max_tokens: 4000,
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: EXTRACTION_PROMPT },
+                            imageContent,
+                        ],
+                    },
+                ],
+            });
+
+            content = visionResponse.choices[0]?.message?.content || "";
+        }
+        else {
+            return NextResponse.json(
+                { error: `Unsupported file type: ${file.type}. Please upload a PDF or an image.` },
+                { status: 400 }
+            );
+        }
 
         if (!content) {
             return NextResponse.json(
-                { error: "Failed to extract content from image" },
+                { error: "Failed to extract content from document" },
                 { status: 500 }
             );
         }

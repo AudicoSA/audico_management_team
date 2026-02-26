@@ -38,6 +38,7 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
   const [consultationRequest, setConsultationRequest] = useState<ConsultationRequestSummary | null>(null);
   const [isEscalated, setIsEscalated] = useState(false);
   const [tenderResults, setTenderResults] = useState<any>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [isProcessingTender, setIsProcessingTender] = useState(false);
 
@@ -224,7 +225,7 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (uploadPreview) {
+      if (uploadFile) {
         handleProcessTender();
       } else {
         handleSend();
@@ -243,13 +244,20 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
       return;
     }
 
-    // Convert to base64 for preview and API
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      setUploadPreview(base64);
-    };
-    reader.readAsDataURL(file);
+    // Convert to base64 for image preview only
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        setUploadPreview(base64);
+      };
+      reader.readAsDataURL(file);
+    } else if (file.type === 'application/pdf') {
+      // Use a generic placeholder/icon URL or just set preview to true-ish to trigger UI
+      setUploadPreview('pdf-document');
+    }
+
+    setUploadFile(file);
 
     // Reset file input
     e.target.value = '';
@@ -257,20 +265,20 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
 
   // Process tender document
   const handleProcessTender = async () => {
-    if (!uploadPreview) return;
+    if (!uploadFile) return;
 
     setIsProcessingTender(true);
-    addMessage('user', '📎 [Uploaded tender document for processing]');
-    addMessage('assistant', 'Processing your tender document... This may take a moment as I analyze the image and match products.');
+    addMessage('user', `📎 [Uploaded document: ${uploadFile.name}]`);
+    addMessage('assistant', 'Processing your document... This may take a moment as I analyze it and match products.');
 
     try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      formData.append('sessionId', sessionId);
+
       const response = await fetch('/api/tender/process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image: uploadPreview,
-          sessionId,
-        }),
+        body: formData, // Send FormData instead of JSON
       });
 
       const data = await response.json();
@@ -297,6 +305,7 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
       addMessage('assistant', `Sorry, I couldn't process that document: ${error.message}. Please try again with a clearer image.`);
     } finally {
       setIsProcessingTender(false);
+      setUploadFile(null);
       setUploadPreview(null);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
@@ -364,6 +373,7 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
       setConsultationRequest(null);
       setIsEscalated(false);
       setTenderResults(null);
+      setUploadFile(null);
       setUploadPreview(null);
 
       // 4. Clear URL if present
@@ -507,25 +517,34 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
       </div>
 
       {/* Upload Preview */}
-      {uploadPreview && (
+      {uploadFile && uploadPreview && (
         <div className="px-3 sm:px-6 py-2 bg-background-secondary border-t border-border">
           <div className="flex items-center gap-3 max-w-4xl mx-auto">
             <div className="relative">
-              <img
-                src={uploadPreview}
-                alt="Upload preview"
-                className="h-16 w-auto rounded-lg border border-border"
-              />
+              {uploadPreview === 'pdf-document' ? (
+                <div className="h-16 w-12 bg-red-100 rounded flex items-center justify-center border border-red-200">
+                  <span className="text-red-700 font-bold text-xs">PDF</span>
+                </div>
+              ) : (
+                <img
+                  src={uploadPreview}
+                  alt="Upload preview"
+                  className="h-16 w-auto rounded-lg border border-border"
+                />
+              )}
               <button
-                onClick={() => setUploadPreview(null)}
+                onClick={() => {
+                  setUploadPreview(null);
+                  setUploadFile(null);
+                }}
                 className="absolute -top-2 -right-2 bg-error text-background rounded-full p-1 hover:bg-error/80"
               >
                 <X size={12} />
               </button>
             </div>
             <div className="flex-1">
-              <p className="text-sm text-foreground">Tender document ready</p>
-              <p className="text-xs text-foreground-muted">Click send to process</p>
+              <p className="text-sm text-foreground">{uploadFile.name}</p>
+              <p className="text-xs text-foreground-muted">Ready to process</p>
             </div>
           </div>
         </div>
@@ -563,17 +582,17 @@ export function UnifiedChat({ onQuoteUpdate, onNewChat }: UnifiedChatProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={uploadPreview ? "Press send to process document..." : "Type your message..."}
+            placeholder={uploadFile ? "Press send to process document..." : "Type your message..."}
             className="input-field flex-1"
             disabled={isLoading || isProcessingTender}
           />
           <button
             type="button"
-            onClick={uploadPreview ? handleProcessTender : handleSend}
-            disabled={(!input.trim() && !uploadPreview) || isLoading || isProcessingTender}
+            onClick={uploadFile ? handleProcessTender : handleSend}
+            disabled={(!input.trim() && !uploadFile) || isLoading || isProcessingTender}
             className={cn(
               "bg-accent text-background font-semibold p-3 rounded-lg transition-all",
-              ((!input.trim() && !uploadPreview) || isLoading || isProcessingTender)
+              ((!input.trim() && !uploadFile) || isLoading || isProcessingTender)
                 ? "opacity-50 cursor-not-allowed"
                 : "hover:bg-accent-hover hover:scale-105"
             )}
