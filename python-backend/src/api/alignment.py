@@ -623,10 +623,13 @@ async def auto_link_products(request: AutoLinkRequest):
 
         message = (f"Aligned {aligned_count} products "
                    f"({pass1_count} by SKU, {pass1b_count} by name, {pass2_count} by fuzzy) "
-                   f"from {processed_count} unique SKUs scanned.")
+                   f"from {processed_count} unique SKUs scanned. "
+                   f"[OC index: {len(oc_products)} products, {len(oc_by_norm)} norms, "
+                   f"{len(oc_by_name)} names, {len(oc_list)} indexed, threshold={request.confidence_threshold}]")
         if request.dry_run:
             message = (f"[DRY RUN] Would align {pass1_count} by SKU, {pass1b_count} by name, "
-                       f"{pass2_count} by fuzzy from {processed_count} unique SKUs.")
+                       f"{pass2_count} by fuzzy from {processed_count} unique SKUs. "
+                       f"[OC index: {len(oc_products)} products]")
 
         logger.info("auto_link_complete", aligned=aligned_count, pass1=pass1_count,
                      pass1b=pass1b_count, pass2=pass2_count, processed=processed_count)
