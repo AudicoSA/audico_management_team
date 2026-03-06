@@ -1782,6 +1782,7 @@ async def _do_reverse_import(request: ReverseImportRequest):
     imported = 0
     skipped = 0
     errors = 0
+    first_error = None
 
     for i in range(0, len(orphaned), request.batch_size):
         batch = orphaned[i:i + request.batch_size]
@@ -1800,13 +1801,16 @@ async def _do_reverse_import(request: ReverseImportRequest):
                 # Insert into Supabase products
                 insert_result = sb.client.table("products").insert({
                     "sku": sku,
+                    "supplier_sku": sku,
                     "product_name": name,
                     "selling_price": price,
                     "cost_price": price,
+                    "retail_price": price,
                     "total_stock": stock,
                     "brand": p.get('manufacturer', ''),
                     "supplier_id": legacy_supplier_id,
-                    "description": ""
+                    "description": "",
+                    "active": True
                 }).execute()
 
                 if insert_result.data:
@@ -1823,13 +1827,15 @@ async def _do_reverse_import(request: ReverseImportRequest):
                     skipped += 1
             except Exception as e:
                 errors += 1
-                if errors <= 5:
-                    logger.warning("reverse_import_item_failed", sku=sku, error=str(e))
+                if first_error is None:
+                    first_error = str(e)
+                if errors <= 10:
+                    logger.warning("reverse_import_item_failed", sku=sku, product_id=p['product_id'], error=str(e))
 
         logger.info("reverse_import_progress", batch=i, imported=imported, errors=errors)
 
     prefix = "[DRY RUN] Would import" if request.dry_run else "Imported"
-    return {
+    result = {
         "status": "success",
         "imported": imported,
         "skipped": skipped,
@@ -1837,3 +1843,6 @@ async def _do_reverse_import(request: ReverseImportRequest):
         "total_orphaned": len(orphaned),
         "message": f"{prefix} {imported} orphaned OpenCart products into Supabase"
     }
+    if first_error:
+        result["first_error"] = first_error
+    return result
