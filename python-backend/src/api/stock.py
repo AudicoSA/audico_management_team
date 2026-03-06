@@ -73,3 +73,80 @@ async def apply_price_changes(payload: Dict[str, Any]):
     except Exception as e:
         logger.error("apply_changes_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/round-prices")
+async def round_all_prices(payload: Dict[str, Any] = None):
+    """
+    Round ALL linked OpenCart product prices to the nearest R10.
+    Only updates products where the rounded price differs from current.
+
+    Request body (optional):
+        { "dry_run": true }
+    """
+    dry_run = True
+    if payload:
+        dry_run = payload.get("dry_run", True)
+
+    try:
+        opencart = get_opencart_connector()
+
+        # Fetch all active product prices from OpenCart
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    SELECT product_id, price FROM {opencart.prefix}product
+                    WHERE status = 1 AND price > 0
+                """)
+                products = cursor.fetchall()
+        finally:
+            conn.close()
+
+        # Find products needing rounding
+        to_update = []
+        for p in products:
+            current = float(p['price'])
+            rounded = round(current / 10) * 10
+            if abs(current - rounded) > 0.01:
+                to_update.append({
+                    'product_id': p['product_id'],
+                    'price': rounded
+                })
+
+        if not to_update:
+            return {
+                "status": "success",
+                "dry_run": dry_run,
+                "checked": len(products),
+                "updated": 0,
+                "message": "All prices already rounded to nearest R10"
+            }
+
+        if dry_run:
+            return {
+                "status": "success",
+                "dry_run": True,
+                "checked": len(products),
+                "would_update": len(to_update),
+                "sample": to_update[:10],
+                "message": f"[DRY RUN] Would round {len(to_update)} of {len(products)} products"
+            }
+
+        # Apply updates
+        result = await opencart.bulk_update_products(to_update)
+
+        logger.info("prices_rounded", checked=len(products), updated=result['updated'])
+
+        return {
+            "status": "success",
+            "dry_run": False,
+            "checked": len(products),
+            "updated": result['updated'],
+            "failed": result['failed'],
+            "message": f"Rounded {result['updated']} product prices to nearest R10"
+        }
+
+    except Exception as e:
+        logger.error("round_prices_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

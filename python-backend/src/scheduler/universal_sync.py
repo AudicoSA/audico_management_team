@@ -80,7 +80,8 @@ class UniversalProductSyncer:
 
         product = p_res.data[0]
 
-        sb_price = float(product.get('selling_price') or 0)
+        sb_price_raw = float(product.get('selling_price') or 0)
+        sb_price = round(sb_price_raw / 10) * 10 if sb_price_raw > 0 else 0  # Round to nearest R10
         sb_stock = int(product.get('total_stock') or 0)
         sku = product.get('sku', 'unknown')
 

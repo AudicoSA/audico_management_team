@@ -401,3 +401,122 @@ async def merge_products(payload: Dict[str, Any]):
     except Exception as e:
         logger.error("merge_products_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/auto-merge-duplicates")
+async def auto_merge_duplicates(payload: Dict[str, Any] = None):
+    """
+    Automatically merge all duplicate-name and potential-fuzzy-duplicate products in OpenCart.
+    Keeps the aligned product (or highest product_id if neither aligned).
+    Reassigns product_matches entries from deleted IDs to the kept target.
+
+    Request body (optional):
+        { "dry_run": true }
+    """
+    dry_run = True
+    if payload:
+        dry_run = payload.get("dry_run", True)
+
+    try:
+        opencart = get_opencart_connector()
+        supabase = get_supabase_connector()
+
+        # 1. Find all duplicate name groups in OpenCart
+        conn = opencart._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT pd.name, GROUP_CONCAT(pd.product_id) as product_ids
+                    FROM oc_product_description pd
+                    WHERE pd.name IS NOT NULL AND pd.name != '' AND pd.language_id = 1
+                    GROUP BY pd.name
+                    HAVING COUNT(*) > 1
+                """)
+                dup_groups = cursor.fetchall()
+        finally:
+            conn.close()
+
+        # 2. Get aligned product IDs
+        matches = supabase.client.table("product_matches").select("opencart_product_id").execute()
+        aligned_ids = set(m['opencart_product_id'] for m in matches.data if m.get('opencart_product_id'))
+
+        merged_groups = 0
+        total_deleted = 0
+        actions = []
+
+        for group in dup_groups:
+            name = group['name']
+            pids = [int(x) for x in group['product_ids'].split(',')]
+
+            if len(pids) < 2:
+                continue
+
+            # Pick target: aligned first, then highest product_id
+            aligned_in_group = [pid for pid in pids if pid in aligned_ids]
+            if aligned_in_group:
+                target = aligned_in_group[0]
+            else:
+                target = max(pids)
+
+            source_ids = [pid for pid in pids if pid != target]
+
+            actions.append({
+                "name": name,
+                "keep": target,
+                "delete": source_ids,
+                "reason": "aligned" if aligned_in_group else "highest_id"
+            })
+
+            if not dry_run and source_ids:
+                # Reassign any product_matches pointing to deleted IDs
+                for sid in source_ids:
+                    try:
+                        supabase.client.table("product_matches")\
+                            .update({"opencart_product_id": target})\
+                            .eq("opencart_product_id", sid)\
+                            .execute()
+                    except Exception:
+                        pass
+
+                # Delete source products from OpenCart
+                conn2 = opencart._get_connection()
+                try:
+                    with conn2.cursor() as cursor:
+                        fmt = ','.join(['%s'] * len(source_ids))
+                        cursor.execute(f"DELETE FROM oc_product WHERE product_id IN ({fmt})", tuple(source_ids))
+                        cursor.execute(f"DELETE FROM oc_product_description WHERE product_id IN ({fmt})", tuple(source_ids))
+                        cursor.execute(f"DELETE FROM oc_product_to_store WHERE product_id IN ({fmt})", tuple(source_ids))
+                        cursor.execute(f"DELETE FROM oc_product_to_category WHERE product_id IN ({fmt})", tuple(source_ids))
+                        try:
+                            seo_queries = [f"product_id={sid}" for sid in source_ids]
+                            seo_fmt = ','.join(['%s'] * len(seo_queries))
+                            cursor.execute(f"DELETE FROM oc_seo_url WHERE query IN ({seo_fmt})", tuple(seo_queries))
+                        except Exception:
+                            pass
+                    conn2.commit()
+                    total_deleted += len(source_ids)
+                    merged_groups += 1
+                except Exception as e:
+                    conn2.rollback()
+                    logger.error("auto_merge_group_failed", name=name, error=str(e))
+                finally:
+                    conn2.close()
+            elif dry_run:
+                merged_groups += 1
+                total_deleted += len(source_ids)
+
+        prefix = "[DRY RUN] Would merge" if dry_run else "Merged"
+        logger.info("auto_merge_complete", groups=merged_groups, deleted=total_deleted, dry_run=dry_run)
+
+        return {
+            "status": "success",
+            "dry_run": dry_run,
+            "groups_merged": merged_groups,
+            "products_deleted": total_deleted,
+            "actions": actions[:50],
+            "message": f"{prefix} {merged_groups} duplicate groups, removing {total_deleted} products"
+        }
+
+    except Exception as e:
+        logger.error("auto_merge_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

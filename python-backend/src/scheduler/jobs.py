@@ -125,6 +125,41 @@ def setup_scheduler():
         replace_existing=True
     )
 
+    # Alignment Health Check: 04:00 AM Daily (after universal sync)
+    scheduler.add_job(
+        run_alignment_health_check,
+        CronTrigger(hour=4, minute=0),
+        id="alignment_health_check",
+        replace_existing=True
+    )
+
+async def run_alignment_health_check():
+    """Daily alignment health check — logs metrics and warns on drift."""
+    logger.info("alignment_health_check_started")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get("http://localhost:8000/api/alignment/health")
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info("alignment_health_report",
+                            opencart=data.get("opencart_active_products"),
+                            linked=data.get("linked_to_opencart"),
+                            orphaned=data.get("orphaned_opencart"),
+                            unmatched=data.get("unmatched_supabase"),
+                            dup_names=data.get("duplicate_names_oc"),
+                            health_score=data.get("health_score"))
+                # Warn on significant drift
+                if data.get("orphaned_opencart", 0) > 50:
+                    logger.warning("alignment_drift_detected",
+                                   orphaned=data["orphaned_opencart"],
+                                   message="More than 50 orphaned OpenCart products detected")
+            else:
+                logger.error("alignment_health_check_failed", status=resp.status_code)
+    except Exception as e:
+        logger.error("alignment_health_check_failed", error=str(e))
+
+
 async def run_upload_poller_job():
     """Wrapper to run upload poller."""
     # logger.info("upload_poller_job_started") # Too noisy every minute

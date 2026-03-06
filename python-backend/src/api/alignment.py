@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
@@ -409,16 +410,58 @@ async def auto_link_products(request: AutoLinkRequest):
         logger.info("auto_link_oc_index_built", oc_products=len(oc_products),
                      unique_norms=len(oc_by_norm), unique_names=len(oc_by_name))
 
-        # ── Pass 1 (Fast): Match by SKU/model in Python using indexes ──
+        # Also build product_id lookup for Scoop SKU pass
+        oc_by_pid = {p['product_id']: p for p in oc_products}
+
+        # ── Pass 0 (Scoop SKU): Extract product_id from SKUs like '12622_en-gb-ZAR' ──
         aligned_count = 0
         processed_count = 0
+        pass0_count = 0
         pass1_count = 0
         pass1b_count = 0
         pass2_count = 0
-        remaining_skus = {}
+        after_pass0 = {}
+
+        def _extract_scoop_id(sku_val):
+            """Extract OC product_id from Scoop-format SKUs like '12622_en-gb-ZAR'."""
+            m = re.match(r'^(\d+)_en-gb-[A-Z]{3}$', sku_val)
+            return int(m.group(1)) if m else None
+
+        def _strip_supplier_prefix(sku_val):
+            """Strip common supplier prefixes: 'sp-UUID', 'nol-123', 'PA-123'."""
+            stripped = re.sub(r'^(sp-[0-9a-f-]+|nol-|pa-|PA-)', '', sku_val)
+            return stripped if stripped != sku_val else None
 
         for sku, products_list in unmatched_by_sku.items():
             processed_count += 1
+            oc_pid = None
+
+            # Scoop format: '12622_en-gb-ZAR' → product_id 12622
+            scoop_id = _extract_scoop_id(sku)
+            if scoop_id and scoop_id in oc_by_pid:
+                oc_pid = scoop_id
+                if not request.dry_run:
+                    for p in products_list:
+                        try:
+                            sb.client.table("product_matches").insert({
+                                "internal_product_id": p['id'],
+                                "opencart_product_id": oc_pid,
+                                "match_type": "auto_scoop_id",
+                                "score": 100
+                            }).execute()
+                            aligned_count += 1
+                        except Exception:
+                            pass
+                pass0_count += 1
+            else:
+                after_pass0[sku] = products_list
+
+        logger.info("auto_link_pass0_done", matched=pass0_count, remaining=len(after_pass0))
+
+        # ── Pass 1 (Fast): Match by SKU/model in Python using indexes ──
+        remaining_skus = {}
+
+        for sku, products_list in after_pass0.items():
             oc_pid = None
 
             # Try exact SKU
@@ -429,6 +472,15 @@ async def auto_link_products(request: AutoLinkRequest):
                 sku_norm = _normalize(sku)
                 if sku_norm:
                     oc_pid = oc_by_norm.get(sku_norm)
+
+            # Try stripping supplier prefix then matching
+            if not oc_pid:
+                stripped = _strip_supplier_prefix(sku)
+                if stripped:
+                    stripped_norm = _normalize(stripped)
+                    oc_pid = oc_by_sku.get(stripped) or oc_by_model.get(stripped)
+                    if not oc_pid and stripped_norm:
+                        oc_pid = oc_by_norm.get(stripped_norm)
 
             if oc_pid:
                 if not request.dry_run:
@@ -622,22 +674,25 @@ async def auto_link_products(request: AutoLinkRequest):
                 logger.info("auto_link_pass2_progress", processed=i+1, total=len(pass2_items), matched=pass2_count)
 
         message = (f"Aligned {aligned_count} products "
-                   f"({pass1_count} by SKU, {pass1b_count} by name, {pass2_count} by fuzzy) "
+                   f"({pass0_count} by Scoop ID, {pass1_count} by SKU, {pass1b_count} by name, {pass2_count} by fuzzy) "
                    f"from {processed_count} unique SKUs scanned. "
                    f"[OC index: {len(oc_products)} products, {len(oc_by_norm)} norms, "
                    f"{len(oc_by_name)} names, {len(oc_list)} indexed, threshold={request.confidence_threshold}]")
         if request.dry_run:
-            message = (f"[DRY RUN] Would align {pass1_count} by SKU, {pass1b_count} by name, "
-                       f"{pass2_count} by fuzzy from {processed_count} unique SKUs. "
+            message = (f"[DRY RUN] Would align {pass0_count} by Scoop ID, {pass1_count} by SKU, "
+                       f"{pass1b_count} by name, {pass2_count} by fuzzy "
+                       f"from {processed_count} unique SKUs. "
                        f"[OC index: {len(oc_products)} products]")
 
-        logger.info("auto_link_complete", aligned=aligned_count, pass1=pass1_count,
-                     pass1b=pass1b_count, pass2=pass2_count, processed=processed_count)
+        logger.info("auto_link_complete", aligned=aligned_count, pass0=pass0_count,
+                     pass1=pass1_count, pass1b=pass1b_count, pass2=pass2_count,
+                     processed=processed_count)
 
         return {
             "status": "success",
             "aligned": aligned_count,
             "processed": processed_count,
+            "pass0_scoop_matches": pass0_count,
             "pass1_sku_matches": pass1_count,
             "pass1b_name_matches": pass1b_count,
             "pass2_fuzzy_matches": pass2_count,
@@ -652,6 +707,113 @@ async def auto_link_products(request: AutoLinkRequest):
 async def auto_link_products_get():
     """Auto-link products (GET wrapper for cron jobs). Runs in background."""
     return await trigger_auto_link(AutoLinkRequest())
+
+@router.get("/debug-auto-link/{internal_product_id}")
+async def debug_auto_link(internal_product_id: str):
+    """Debug why auto-link misses a specific product. Returns detailed trace."""
+    import re
+    sb = get_supabase_connector()
+    from src.connectors.opencart import get_opencart_connector
+
+    def _normalize(s):
+        if not s:
+            return ""
+        return re.sub(r'[^a-z0-9]', '', s.lower())
+
+    # 1. Get the product from Supabase
+    p_resp = sb.client.table("products").select("id, sku, product_name, selling_price").eq("id", internal_product_id).single().execute()
+    product = p_resp.data
+    if not product:
+        return {"error": "Product not found in Supabase"}
+
+    s_name = product.get("product_name", "") or ""
+    s_sku = product.get("sku", "") or ""
+    s_name_norm = _normalize(s_name)
+    s_sku_norm = _normalize(s_sku)
+
+    # 2. Check if already matched
+    match_check = sb.client.table("product_matches").select("*").eq("internal_product_id", internal_product_id).execute()
+    already_matched = match_check.data
+
+    # 3. Load OC products (same query as auto-link)
+    oc = get_opencart_connector()
+    conn = oc._get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT p.product_id, p.sku, p.model, pd.name, pd.language_id
+                FROM {oc.prefix}product p
+                LEFT JOIN {oc.prefix}product_description pd ON (p.product_id = pd.product_id AND pd.language_id = 1)
+                WHERE p.status = 1
+            """)
+            oc_products = cursor.fetchall()
+    finally:
+        conn.close()
+
+    # 4. Build oc_by_name index (same as auto-link)
+    oc_by_name = {}
+    oc_by_sku = {}
+    oc_by_norm = {}
+    for p in oc_products:
+        pid = p['product_id']
+        if p.get('sku'):
+            oc_by_sku[p['sku']] = pid
+            oc_by_norm[_normalize(p['sku'])] = pid
+        if p.get('model'):
+            oc_by_norm[_normalize(p['model'])] = pid
+        if p.get('name'):
+            nm = _normalize(p['name'])
+            if nm and len(nm) >= 6:
+                oc_by_name[nm] = pid
+
+    # 5. Test each pass
+    pass1_sku = oc_by_sku.get(s_sku) or oc_by_sku.get(s_sku)
+    pass1_model = None
+    pass1_norm = oc_by_norm.get(s_sku_norm) if s_sku_norm else None
+    pass1b_name = oc_by_name.get(s_name_norm) if s_name_norm else None
+
+    # 6. Check if the name IS in the OC index by searching for partial matches
+    name_matches_in_index = []
+    for nm, pid in oc_by_name.items():
+        if s_name_norm and (s_name_norm in nm or nm in s_name_norm):
+            name_matches_in_index.append({"normalized": nm, "product_id": pid, "exact": nm == s_name_norm})
+        if len(name_matches_in_index) >= 5:
+            break
+
+    # 7. Also directly search OC products for matching name
+    direct_oc_matches = []
+    for p in oc_products:
+        oc_name = p.get('name') or ''
+        if oc_name and _normalize(oc_name) == s_name_norm:
+            direct_oc_matches.append({
+                "product_id": p['product_id'],
+                "name": oc_name,
+                "sku": p.get('sku'),
+                "language_id": p.get('language_id')
+            })
+
+    return {
+        "product": {
+            "id": internal_product_id,
+            "name": s_name,
+            "name_normalized": s_name_norm,
+            "name_norm_len": len(s_name_norm),
+            "sku": s_sku,
+            "sku_normalized": s_sku_norm,
+        },
+        "already_matched": already_matched,
+        "oc_index_stats": {
+            "total_products": len(oc_products),
+            "names_indexed": len(oc_by_name),
+            "skus_indexed": len(oc_by_sku),
+            "norms_indexed": len(oc_by_norm),
+        },
+        "pass1_sku_match": pass1_sku,
+        "pass1_norm_match": pass1_norm,
+        "pass1b_name_match": pass1b_name,
+        "name_partial_matches_in_index": name_matches_in_index,
+        "direct_oc_name_matches": direct_oc_matches,
+    }
 
 class CreateRequest(BaseModel):
     internal_product_id: str
@@ -1376,3 +1538,302 @@ def _run_bulk_alignment():
             "progress": _bulk_align_status.get("progress", {})
         }
         logger.error("bulk_align_failed", error=str(e))
+
+
+# ============================================================================
+# HEALTH / AUDIT ENDPOINT
+# ============================================================================
+
+@router.get("/health")
+async def alignment_health():
+    """
+    Single endpoint returning a full alignment health report.
+    Aggregates counts from OpenCart, Supabase, and product_matches.
+    """
+    sb = get_supabase_connector()
+    from src.connectors.opencart import get_opencart_connector
+    oc = get_opencart_connector()
+
+    try:
+        # 1. OpenCart totals
+        conn = oc._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(f"SELECT COUNT(*) as cnt FROM {oc.prefix}product WHERE status = 1")
+                oc_total = cursor.fetchone()['cnt']
+
+                # Duplicate SKUs
+                cursor.execute(f"""
+                    SELECT COUNT(*) as cnt FROM (
+                        SELECT sku FROM {oc.prefix}product
+                        WHERE sku IS NOT NULL AND sku != ''
+                        GROUP BY sku HAVING COUNT(*) > 1
+                    ) t
+                """)
+                dup_skus = cursor.fetchone()['cnt']
+
+                # Duplicate names
+                cursor.execute(f"""
+                    SELECT COUNT(*) as cnt FROM (
+                        SELECT name FROM {oc.prefix}product_description
+                        WHERE name IS NOT NULL AND name != ''
+                        GROUP BY name HAVING COUNT(*) > 1
+                    ) t
+                """)
+                dup_names = cursor.fetchone()['cnt']
+        finally:
+            conn.close()
+
+        # 2. Supabase product count
+        sb_count_resp = sb.client.table("products").select("id", count="exact").execute()
+        sb_total = sb_count_resp.count if sb_count_resp.count is not None else len(sb_count_resp.data)
+
+        # 3. Product matches count
+        matches_resp = sb.client.table("product_matches").select("id", count="exact").execute()
+        matched_total = matches_resp.count if matches_resp.count is not None else len(matches_resp.data)
+
+        # Matched with valid OC ID (actually linked)
+        linked_resp = sb.client.table("product_matches").select("id", count="exact").neq("opencart_product_id", None).execute()
+        linked_total = linked_resp.count if linked_resp.count is not None else len(linked_resp.data)
+
+        # Ignored count
+        ignored_resp = sb.client.table("product_matches").select("id", count="exact").eq("match_type", "ignored").execute()
+        ignored_total = ignored_resp.count if ignored_resp.count is not None else len(ignored_resp.data)
+
+        # 4. Orphaned OC products (in OC but not linked via product_matches)
+        linked_oc_ids = set()
+        offset = 0
+        while True:
+            batch = sb.client.table("product_matches")\
+                .select("opencart_product_id")\
+                .neq("opencart_product_id", None)\
+                .range(offset, offset + 999)\
+                .execute()
+            if not batch.data:
+                break
+            linked_oc_ids.update(m['opencart_product_id'] for m in batch.data)
+            if len(batch.data) < 1000:
+                break
+            offset += 1000
+
+        orphaned_count = oc_total - len(linked_oc_ids)
+        if orphaned_count < 0:
+            orphaned_count = 0
+
+        # 5. Unmatched Supabase products (no entry in product_matches at all)
+        matched_sb_ids = set()
+        offset = 0
+        while True:
+            batch = sb.client.table("product_matches")\
+                .select("internal_product_id")\
+                .range(offset, offset + 999)\
+                .execute()
+            if not batch.data:
+                break
+            matched_sb_ids.update(m['internal_product_id'] for m in batch.data)
+            if len(batch.data) < 1000:
+                break
+            offset += 1000
+        unmatched_sb = sb_total - len(matched_sb_ids)
+        if unmatched_sb < 0:
+            unmatched_sb = 0
+
+        # 6. Last auto-link result
+        last_auto_link = _auto_link_status.get("last_result")
+
+        result = {
+            "opencart_active_products": oc_total,
+            "supabase_products": sb_total,
+            "product_matches_total": matched_total,
+            "linked_to_opencart": linked_total,
+            "ignored": ignored_total,
+            "unmatched_supabase": unmatched_sb,
+            "orphaned_opencart": orphaned_count,
+            "duplicate_skus_oc": dup_skus,
+            "duplicate_names_oc": dup_names,
+            "last_auto_link": last_auto_link,
+            "health_score": _calc_health_score(oc_total, linked_total, orphaned_count, dup_names, dup_skus)
+        }
+
+        logger.info("alignment_health_report", **{k: v for k, v in result.items() if k != "last_auto_link"})
+        return result
+
+    except Exception as e:
+        logger.error("alignment_health_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _calc_health_score(oc_total, linked, orphaned, dup_names, dup_skus):
+    """Simple 0-100 health score. 100 = perfectly aligned."""
+    if oc_total == 0:
+        return 100
+    link_pct = (linked / oc_total) * 60  # 60 points for alignment coverage
+    orphan_penalty = min(30, (orphaned / oc_total) * 100)  # up to -30 for orphans
+    dup_penalty = min(10, (dup_names + dup_skus) * 1)  # -1 per duplicate group
+    score = link_pct - orphan_penalty - dup_penalty
+    return max(0, min(100, round(score)))
+
+
+# ============================================================================
+# REVERSE-IMPORT: Bring orphaned OpenCart products into Supabase
+# ============================================================================
+
+class ReverseImportRequest(BaseModel):
+    dry_run: bool = True
+    batch_size: int = 100
+
+@router.post("/reverse-import")
+async def reverse_import_products(request: ReverseImportRequest):
+    """
+    Import orphaned OpenCart products (not in Supabase) into Supabase products table
+    and create product_matches entries. This allows the universal sync to manage them.
+    """
+    import threading
+
+    if _reverse_import_status.get("running"):
+        return {"status": "already_running"}
+
+    def _run():
+        _reverse_import_status["running"] = True
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(_do_reverse_import(request))
+            loop.close()
+            _reverse_import_status["last_result"] = result
+        except Exception as e:
+            _reverse_import_status["last_result"] = {"status": "failed", "error": str(e)}
+        finally:
+            _reverse_import_status["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "started", "message": "Reverse import started. Check GET /api/alignment/reverse-import-status"}
+
+
+_reverse_import_status = {"running": False, "last_result": None}
+
+@router.get("/reverse-import-status")
+async def get_reverse_import_status():
+    return _reverse_import_status
+
+
+async def _do_reverse_import(request: ReverseImportRequest):
+    sb = get_supabase_connector()
+    from src.connectors.opencart import get_opencart_connector
+    oc = get_opencart_connector()
+
+    # 1. Fetch ALL active OC products
+    conn = oc._get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT p.product_id, p.sku, p.model, p.price, p.quantity,
+                       pd.name, m.name as manufacturer
+                FROM {oc.prefix}product p
+                LEFT JOIN {oc.prefix}product_description pd
+                    ON (p.product_id = pd.product_id AND pd.language_id = 1)
+                LEFT JOIN {oc.prefix}manufacturer m
+                    ON (p.manufacturer_id = m.manufacturer_id)
+                WHERE p.status = 1
+            """)
+            oc_products = cursor.fetchall()
+    finally:
+        conn.close()
+
+    # 2. Build set of already-linked OC product IDs
+    linked_oc_ids = set()
+    offset = 0
+    while True:
+        batch = sb.client.table("product_matches")\
+            .select("opencart_product_id")\
+            .neq("opencart_product_id", None)\
+            .range(offset, offset + 999)\
+            .execute()
+        if not batch.data:
+            break
+        linked_oc_ids.update(m['opencart_product_id'] for m in batch.data)
+        if len(batch.data) < 1000:
+            break
+        offset += 1000
+
+    # 3. Find orphaned products
+    orphaned = [p for p in oc_products if p['product_id'] not in linked_oc_ids]
+
+    if not orphaned:
+        return {"status": "success", "imported": 0, "message": "No orphaned products found"}
+
+    # 4. Ensure "OpenCart Legacy" supplier exists
+    legacy_supplier_id = None
+    if not request.dry_run:
+        try:
+            existing = sb.client.table("suppliers").select("id").eq("name", "OpenCart Legacy").limit(1).execute()
+            if existing.data:
+                legacy_supplier_id = existing.data[0]['id']
+            else:
+                result = sb.client.table("suppliers").insert({
+                    "name": "OpenCart Legacy",
+                    "enabled": False
+                }).execute()
+                legacy_supplier_id = result.data[0]['id']
+        except Exception as e:
+            logger.warning("legacy_supplier_create_failed", error=str(e))
+
+    # 5. Import orphaned products
+    imported = 0
+    skipped = 0
+    errors = 0
+
+    for i in range(0, len(orphaned), request.batch_size):
+        batch = orphaned[i:i + request.batch_size]
+
+        for p in batch:
+            sku = p.get('sku') or p.get('model') or f"oc-{p['product_id']}"
+            name = p.get('name') or f"OpenCart Product {p['product_id']}"
+            price = float(p.get('price', 0))
+            stock = int(p.get('quantity', 0))
+
+            if request.dry_run:
+                imported += 1
+                continue
+
+            try:
+                # Insert into Supabase products
+                insert_result = sb.client.table("products").insert({
+                    "sku": sku,
+                    "product_name": name,
+                    "selling_price": price,
+                    "cost_price": price,
+                    "total_stock": stock,
+                    "brand": p.get('manufacturer', ''),
+                    "supplier_id": legacy_supplier_id,
+                    "description": ""
+                }).execute()
+
+                if insert_result.data:
+                    sb_product_id = insert_result.data[0]['id']
+                    # Create product_matches link
+                    sb.client.table("product_matches").insert({
+                        "internal_product_id": sb_product_id,
+                        "opencart_product_id": p['product_id'],
+                        "match_type": "reverse_import",
+                        "score": 100
+                    }).execute()
+                    imported += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                errors += 1
+                if errors <= 5:
+                    logger.warning("reverse_import_item_failed", sku=sku, error=str(e))
+
+        logger.info("reverse_import_progress", batch=i, imported=imported, errors=errors)
+
+    prefix = "[DRY RUN] Would import" if request.dry_run else "Imported"
+    return {
+        "status": "success",
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "total_orphaned": len(orphaned),
+        "message": f"{prefix} {imported} orphaned OpenCart products into Supabase"
+    }
