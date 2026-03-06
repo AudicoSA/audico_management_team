@@ -1771,17 +1771,7 @@ async def _do_reverse_import(request: ReverseImportRequest):
                 legacy_supplier_id = existing.data[0]['id']
             else:
                 result = sb.client.table("suppliers").insert({
-                    "name": "OpenCart Legacy",
-                    "company": "OpenCart Legacy",
-                    "street_address": "",
-                    "local_area": "",
-                    "city": "",
-                    "code": "",
-                    "country_code": "ZA",
-                    "contact_name": "",
-                    "contact_email": "",
-                    "contact_phone": "",
-                    "enabled": False
+                    "name": "OpenCart Legacy"
                 }).execute()
                 legacy_supplier_id = result.data[0]['id']
         except Exception as e:
