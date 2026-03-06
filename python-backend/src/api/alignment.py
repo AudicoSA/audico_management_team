@@ -1772,11 +1772,24 @@ async def _do_reverse_import(request: ReverseImportRequest):
             else:
                 result = sb.client.table("suppliers").insert({
                     "name": "OpenCart Legacy",
+                    "company": "OpenCart Legacy",
+                    "street_address": "",
+                    "local_area": "",
+                    "city": "",
+                    "code": "",
+                    "country_code": "ZA",
+                    "contact_name": "",
+                    "contact_email": "",
+                    "contact_phone": "",
                     "enabled": False
                 }).execute()
                 legacy_supplier_id = result.data[0]['id']
         except Exception as e:
-            logger.warning("legacy_supplier_create_failed", error=str(e))
+            logger.error("legacy_supplier_create_failed", error=str(e))
+            return {"status": "failed", "error": f"Could not create OpenCart Legacy supplier: {e}"}
+
+        if not legacy_supplier_id:
+            return {"status": "failed", "error": "legacy_supplier_id is None after creation attempt"}
 
     # 5. Import orphaned products
     imported = 0
