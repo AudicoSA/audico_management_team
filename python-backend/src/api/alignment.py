@@ -1593,7 +1593,7 @@ async def alignment_health():
         matched_total = matches_resp.count if matches_resp.count is not None else len(matches_resp.data)
 
         # Matched with valid OC ID (actually linked)
-        linked_resp = sb.client.table("product_matches").select("id", count="exact").neq("opencart_product_id", None).execute()
+        linked_resp = sb.client.table("product_matches").select("id", count="exact").not_.is_("opencart_product_id", "null").execute()
         linked_total = linked_resp.count if linked_resp.count is not None else len(linked_resp.data)
 
         # Ignored count
@@ -1606,7 +1606,7 @@ async def alignment_health():
         while True:
             batch = sb.client.table("product_matches")\
                 .select("opencart_product_id")\
-                .neq("opencart_product_id", None)\
+                .not_.is_("opencart_product_id", "null")\
                 .range(offset, offset + 999)\
                 .execute()
             if not batch.data:
@@ -1746,7 +1746,7 @@ async def _do_reverse_import(request: ReverseImportRequest):
     while True:
         batch = sb.client.table("product_matches")\
             .select("opencart_product_id")\
-            .neq("opencart_product_id", None)\
+            .not_.is_("opencart_product_id", "null")\
             .range(offset, offset + 999)\
             .execute()
         if not batch.data:
