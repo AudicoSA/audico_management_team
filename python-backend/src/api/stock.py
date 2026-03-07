@@ -133,18 +133,42 @@ async def round_all_prices(payload: Dict[str, Any] = None):
                 "message": f"[DRY RUN] Would round {len(to_update)} of {len(products)} products"
             }
 
-        # Apply updates
-        result = await opencart.bulk_update_products(to_update)
+        # Apply updates using batch SQL (CASE WHEN) for speed
+        updated_count = 0
+        batch_size = 500
+        for batch_start in range(0, len(to_update), batch_size):
+            batch = to_update[batch_start:batch_start + batch_size]
+            conn = opencart._get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cases = " ".join(
+                        f"WHEN {item['product_id']} THEN {item['price']}"
+                        for item in batch
+                    )
+                    ids = ",".join(str(item['product_id']) for item in batch)
+                    sql = f"""
+                        UPDATE {opencart.prefix}product
+                        SET price = CASE product_id {cases} END
+                        WHERE product_id IN ({ids})
+                    """
+                    cursor.execute(sql)
+                conn.commit()
+                updated_count += len(batch)
+            except Exception as batch_err:
+                conn.rollback()
+                logger.error("round_prices_batch_failed", batch_start=batch_start, error=str(batch_err))
+            finally:
+                conn.close()
 
-        logger.info("prices_rounded", checked=len(products), updated=result['updated'])
+        logger.info("prices_rounded", checked=len(products), updated=updated_count)
 
         return {
             "status": "success",
             "dry_run": False,
             "checked": len(products),
-            "updated": result['updated'],
-            "failed": result['failed'],
-            "message": f"Rounded {result['updated']} product prices to nearest R10"
+            "updated": updated_count,
+            "failed": len(to_update) - updated_count,
+            "message": f"Rounded {updated_count} product prices to nearest R10"
         }
 
     except Exception as e:
